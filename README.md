@@ -88,14 +88,14 @@ nnUNetv2_predict -i INPUT_FOLDER -o OUTPUT_FOLDER -d DATASET_ID -c CONFIGURATION
 
 1. Path settings
 
-The default data directory for U-Mamba is preset to U-Mamba/data. Users with existing nnUNet setups who wish to use alternative directories for `nnUNet_raw`, `nnUNet_preprocessed`, and `nnUNet_results` can easily adjust these paths in umamba/nnunetv2/path.py to update your specific nnUNet data directory locations, as demonstrated below:
+The default data directory for U-Mamba is preset to U-Mamba/data. If you want to use mounted cloud storage or a shared dataset volume, set the environment variables `nnUNet_raw`, `nnUNet_preprocessed`, and `nnUNet_results` before launching training. The code also falls back to the repository-local `data/` directory when these variables are not set. Example:
 
 ```python
 # An example to set other data path,
 base = '/home/user_name/Documents/U-Mamba/data'
-nnUNet_raw = join(base, 'nnUNet_raw') # or change to os.environ.get('nnUNet_raw')
-nnUNet_preprocessed = join(base, 'nnUNet_preprocessed') # or change to os.environ.get('nnUNet_preprocessed')
-nnUNet_results = join(base, 'nnUNet_results') # or change to os.environ.get('nnUNet_results')
+nnUNet_raw = join(base, 'nnUNet_raw')
+nnUNet_preprocessed = join(base, 'nnUNet_preprocessed')
+nnUNet_results = join(base, 'nnUNet_results')
 ```
 
 2. AMP could lead to nan in the Mamba module. We also provide a trainer without AMP: https://github.com/bowang-lab/U-Mamba/blob/main/umamba/nnunetv2/training/nnUNetTrainer/nnUNetTrainerUMambaEncNoAMP.py
