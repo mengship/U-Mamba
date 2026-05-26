@@ -17,6 +17,10 @@ class nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50(nnUNe
     使用方法:
         nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50
     """
+    def configure_optimizers(self):
+        """修复：添加configure_optimizers方法以兼容基类调用"""
+        return self.configure_optimizer()
+
 
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict,
                  unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):

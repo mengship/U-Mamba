@@ -23,6 +23,10 @@ class nnUNetTrainerUMambaEncRTHD_Ablation6_FullInnovation(nnUNetTrainer):
         nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_Ablation6_FullInnovation
     """
 
+    def configure_optimizers(self):
+        """修复：添加configure_optimizers方法以兼容基类调用"""
+        return self.configure_optimizer()
+
     @staticmethod
     def build_network_architecture(plans_manager: PlansManager,
                                    dataset_json,

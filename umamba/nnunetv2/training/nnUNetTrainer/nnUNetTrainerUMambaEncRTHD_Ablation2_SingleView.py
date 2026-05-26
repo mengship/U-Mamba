@@ -20,6 +20,10 @@ class nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView(nnUNetTrainer):
     使用方法:
         nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView
     """
+    def configure_optimizers(self):
+        """修复：添加configure_optimizers方法以兼容基类调用"""
+        return self.configure_optimizer()
+
 
     @staticmethod
     def build_network_architecture(plans_manager: PlansManager,
