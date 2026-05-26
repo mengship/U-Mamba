@@ -171,6 +171,7 @@ class ResidualMambaEncoder_RTHD(nn.Module):
                  pool_type: str = 'conv',
                  use_rthd: bool = True,  # 是否使用RTHD
                  rthd_stages: List[int] = None,  # 哪些stage使用RTHD，默认前3个stage
+                 rthd_config: dict = None,  # 消融实验配置
                  ):
         super().__init__()
         if isinstance(kernel_sizes, int):
@@ -287,18 +288,24 @@ class ResidualMambaEncoder_RTHD(nn.Module):
             if use_rthd and s in rthd_stages:
                 # 使用RTHD块
                 print(f"Stage {s}: Using RTHDBlock (dim={features_per_stage[s]})")
-                mamba_layers.append(
-                    RTHDBlock(
-                        dim=features_per_stage[s],
-                        d_state=16,
-                        ssm_ratio=2.0,
-                        projection_mode='mean',
-                        reconstruction_mode='broadcast',
-                        use_ds_conv=True,
-                        norm_layer=norm_op,
-                        norm_kwargs=norm_op_kwargs,  # 关键修复：透传归一化配置
-                    )
-                )
+
+                # 准备RTHD配置参数
+                rthd_kwargs = {
+                    'dim': features_per_stage[s],
+                    'd_state': 16,
+                    'ssm_ratio': 2.0,
+                    'projection_mode': 'mean',
+                    'reconstruction_mode': 'broadcast',
+                    'use_ds_conv': True,
+                    'norm_layer': norm_op,
+                    'norm_kwargs': norm_op_kwargs,
+                }
+
+                # 如果提供了消融实验配置，则添加
+                if rthd_config is not None:
+                    rthd_kwargs.update(rthd_config)
+
+                mamba_layers.append(RTHDBlock(**rthd_kwargs))
             else:
                 # 使用原始MambaLayer
                 print(f"Stage {s}: Using MambaLayer (dim={np.prod(feature_map_sizes[s]) if do_channel_token[s] else features_per_stage[s]})")
@@ -485,6 +492,7 @@ class UMambaEnc_RTHD(nn.Module):
                  stem_channels: int = None,
                  use_rthd: bool = True,
                  rthd_stages: List[int] = None,
+                 rthd_config: dict = None,  # 消融实验配置
                  ):
         super().__init__()
         n_blocks_per_stage = n_conv_per_stage
@@ -520,6 +528,7 @@ class UMambaEnc_RTHD(nn.Module):
             stem_channels=stem_channels,
             use_rthd=use_rthd,
             rthd_stages=rthd_stages,
+            rthd_config=rthd_config,  # 传递消融实验配置
         )
 
         self.decoder = UNetResDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
@@ -538,10 +547,24 @@ def get_umamba_enc_rthd_3d_from_plans(
         dataset_json: dict,
         configuration_manager: ConfigurationManager,
         num_input_channels: int,
-        deep_supervision: bool = True
+        deep_supervision: bool = True,
+        rthd_config: dict = None
     ):
     """
     从plans创建UMambaEnc_RTHD网络
+
+    Args:
+        plans_manager: Plans管理器
+        dataset_json: 数据集配置
+        configuration_manager: 配置管理器
+        num_input_channels: 输入通道数
+        deep_supervision: 是否使用深度监督
+        rthd_config: RTHD消融实验配置，包含:
+            - view_mode: 'tri' or 'single'
+            - share_weights: True or False
+            - scan_mode: 'omni' or 'standard'
+            - use_local_window: True or False
+            - window_size: int (default 8)
     """
     num_stages = len(configuration_manager.conv_kernel_sizes)
     dim = len(configuration_manager.conv_kernel_sizes[0])
@@ -550,6 +573,19 @@ def get_umamba_enc_rthd_3d_from_plans(
 
     segmentation_network_class_name = 'UMambaEnc_RTHD'
     network_class = UMambaEnc_RTHD
+
+    # 默认RTHD配置（消融实验 #5: 全局平铺版）
+    default_rthd_config = {
+        'view_mode': 'tri',
+        'share_weights': True,
+        'scan_mode': 'omni',
+        'use_local_window': False,
+        'window_size': 8,
+    }
+
+    # 如果提供了自定义配置，则合并
+    if rthd_config is not None:
+        default_rthd_config.update(rthd_config)
 
     kwargs = {
         'UMambaEnc_RTHD': {
@@ -562,7 +598,8 @@ def get_umamba_enc_rthd_3d_from_plans(
             'nonlin': nn.LeakyReLU,
             'nonlin_kwargs': {'inplace': True},
             'use_rthd': True,  # 启用RTHD
-            'rthd_stages': [0, 1, 2],  # 前3个stage使用RTHD
+            'rthd_stages': [0, 1, 2, 3, 4],  # 所有stage使用RTHD（完整消融实验配置，共5个stage）
+            'rthd_config': default_rthd_config,  # 传递消融实验配置
         }
     }
 

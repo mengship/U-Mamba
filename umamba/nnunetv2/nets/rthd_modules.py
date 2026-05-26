@@ -16,6 +16,69 @@ from typing import Optional, Tuple, Type
 import math
 
 
+def window_partition(x: torch.Tensor, window_size: int) -> Tuple[torch.Tensor, Tuple[int, int]]:
+    """
+    将2D特征图分割为不重叠的局部窗口（LoMamba思想）
+
+    Args:
+        x: 输入特征 (B, C, H, W)
+        window_size: 窗口大小
+    Returns:
+        windows: 窗口特征 (B * num_windows, C, window_size, window_size)
+        (H_pad, W_pad): padding后的尺寸
+    """
+    B, C, H, W = x.shape
+
+    # 计算padding，确保H和W能被window_size整除
+    pad_h = (window_size - H % window_size) % window_size
+    pad_w = (window_size - W % window_size) % window_size
+
+    if pad_h > 0 or pad_w > 0:
+        x = F.pad(x, (0, pad_w, 0, pad_h))
+
+    H_pad, W_pad = H + pad_h, W + pad_w
+
+    # 分割为窗口: (B, C, H_pad, W_pad) -> (B, C, nH, window_size, nW, window_size)
+    nH = H_pad // window_size
+    nW = W_pad // window_size
+
+    windows = x.view(B, C, nH, window_size, nW, window_size)
+    windows = windows.permute(0, 2, 4, 1, 3, 5).contiguous()  # (B, nH, nW, C, window_size, window_size)
+    windows = windows.view(B * nH * nW, C, window_size, window_size)
+
+    return windows, (H_pad, W_pad)
+
+
+def window_reverse(windows: torch.Tensor, window_size: int, H_pad: int, W_pad: int,
+                   H_orig: int, W_orig: int) -> torch.Tensor:
+    """
+    将窗口特征合并回完整的2D特征图
+
+    Args:
+        windows: 窗口特征 (B * num_windows, C, window_size, window_size)
+        window_size: 窗口大小
+        H_pad, W_pad: padding后的尺寸
+        H_orig, W_orig: 原始尺寸
+    Returns:
+        x: 合并后的特征 (B, C, H_orig, W_orig)
+    """
+    nH = H_pad // window_size
+    nW = W_pad // window_size
+    B = windows.shape[0] // (nH * nW)
+    C = windows.shape[1]
+
+    # (B * nH * nW, C, window_size, window_size) -> (B, nH, nW, C, window_size, window_size)
+    x = windows.view(B, nH, nW, C, window_size, window_size)
+    x = x.permute(0, 3, 1, 4, 2, 5).contiguous()  # (B, C, nH, window_size, nW, window_size)
+    x = x.view(B, C, H_pad, W_pad)
+
+    # 移除padding
+    if H_pad > H_orig or W_pad > W_orig:
+        x = x[:, :, :H_orig, :W_orig]
+
+    return x
+
+
 class TriViewProjection(nn.Module):
     """
     三视图投影模块
@@ -114,8 +177,14 @@ class TriViewReconstruction(nn.Module):
 
 class TriViewVMambaBlock(nn.Module):
     """
-    三视图VMamba块
+    三视图VMamba块（支持消融实验）
     核心RTHD模块：将3D特征解耦为三个2D视图，使用参数共享的2D VMamba进行扫描，然后重建回3D
+
+    消融实验控制参数：
+    - view_mode: 'tri' (三视图) 或 'single' (仅轴状位)
+    - share_weights: True (参数共享) 或 False (独立参数)
+    - scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描)
+    - use_local_window: True (局部滑窗) 或 False (全局平铺)
     """
     def __init__(
         self,
@@ -137,7 +206,13 @@ class TriViewVMambaBlock(nn.Module):
         projection_mode: str = 'mean',
         reconstruction_mode: str = 'broadcast',
         use_residual: bool = True,
-        channels_last: bool = False,  # 2D VMamba是否使用channels_last格式
+        channels_last: bool = False,
+        # 消融实验控制参数
+        view_mode: str = 'tri',  # 'tri' or 'single'
+        share_weights: bool = True,  # True: 参数共享, False: 独立参数
+        scan_mode: str = 'omni',  # 'omni' or 'standard'
+        use_local_window: bool = False,  # True: 局部滑窗, False: 全局平铺
+        window_size: int = 8,  # 局部窗口大小
     ):
         """
         Args:
@@ -156,29 +231,46 @@ class TriViewVMambaBlock(nn.Module):
             reconstruction_mode: 重建模式 ('broadcast', 'weighted')
             use_residual: 是否使用残差连接
             channels_last: 2D VMamba是否使用channels_last (B,H,W,C)格式
+            view_mode: 'tri' (三视图) 或 'single' (仅轴状位) - 消融实验 #2
+            share_weights: True (参数共享) 或 False (独立参数) - 消融实验 #3
+            scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描) - 消融实验 #4
+            use_local_window: True (局部滑窗) 或 False (全局平铺) - 消融实验 #5
+            window_size: 局部窗口大小
         """
         super().__init__()
         self.dim = dim
         self.use_residual = use_residual
         self.channels_last = channels_last
 
-        # 三视图投影
-        self.projection = TriViewProjection(mode=projection_mode)
+        # 消融实验控制参数
+        self.view_mode = view_mode
+        self.share_weights = share_weights
+        self.scan_mode = scan_mode
+        self.use_local_window = use_local_window
+        self.window_size = window_size
 
-        # 三视图重建
-        self.reconstruction = TriViewReconstruction()
+        # 三视图投影（仅在tri模式下使用）
+        if view_mode == 'tri':
+            self.projection = TriViewProjection(mode=projection_mode)
+        else:
+            self.projection = None
 
-        # 真正启用可学习加权
-        if reconstruction_mode == 'weighted':
+        # 三视图重建（仅在tri模式下使用）
+        if view_mode == 'tri':
+            self.reconstruction = TriViewReconstruction()
+        else:
+            self.reconstruction = None
+
+        # 可学习加权（仅在weighted模式下使用）
+        if reconstruction_mode == 'weighted' and view_mode == 'tri':
             self.view_weights = nn.Parameter(torch.ones(3) / 3.0)
         else:
             self.view_weights = None
 
         # 导入SS2D（2D VMamba核心模块）
-        # 尝试多种导入方式，确保健壮性
         SS2D = None
 
-        # 方法1: 尝试绝对导入（如果项目已正确安装）
+        # 方法1: 尝试绝对导入
         try:
             from umamba.instructions.vmamba import SS2D
         except ImportError:
@@ -189,7 +281,6 @@ class TriViewVMambaBlock(nn.Module):
             try:
                 import sys
                 import os
-                # 获取当前文件的父目录的父目录的父目录，然后进入instructions
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 instructions_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))), 'instructions')
                 if os.path.exists(instructions_dir) and instructions_dir not in sys.path:
@@ -201,51 +292,85 @@ class TriViewVMambaBlock(nn.Module):
         # 方法3: 如果都失败，打印警告并使用占位符
         if SS2D is None:
             print("Warning: Cannot import SS2D from vmamba module.")
-            print("Tried: 1) umamba.instructions.vmamba, 2) dynamic path to instructions/")
-            print("Using placeholder conv layers instead. RTHD will work but without VMamba optimization.")
+            print("Using placeholder conv layers instead.")
 
-        if SS2D is not None:
-            # 参数共享的2D VMamba模块
-            # 注意：channel_first=True表示输入格式为(B,C,H,W)，这是标准的医疗影像格式
-            self.vmamba_2d = SS2D(
-                d_model=dim,
-                d_state=d_state,
-                ssm_ratio=ssm_ratio,
-                dt_rank=dt_rank,
-                d_conv=d_conv,
-                conv_bias=conv_bias,
-                dropout=dropout,
-                bias=bias,
-                dt_min=dt_min,
-                dt_max=dt_max,
-                dt_init=dt_init,
-                dt_scale=dt_scale,
-                dt_init_floor=dt_init_floor,
-                initialize=initialize,
-                forward_type=forward_type,
-                channel_first=(not channels_last),  # 如果channels_last=True，则channel_first=False
-            )
-        else:
-            # 占位符：根据channels_last选择合适的实现
-            print("Warning: SS2D not available, using placeholder implementation")
-            if channels_last:
-                # channels_last格式：使用Linear层
-                self.vmamba_2d = nn.Sequential(
-                    nn.LayerNorm(dim),
-                    nn.Linear(dim, dim),
-                    nn.GELU(),
+        # 根据 share_weights 决定实例化方式
+        if share_weights:
+            # 消融实验 #4, #5, #6: 参数共享，只实例化一个模块
+            if SS2D is not None:
+                self.vmamba_2d = SS2D(
+                    d_model=dim,
+                    d_state=d_state,
+                    ssm_ratio=ssm_ratio,
+                    dt_rank=dt_rank,
+                    d_conv=d_conv,
+                    conv_bias=conv_bias,
+                    dropout=dropout,
+                    bias=bias,
+                    dt_min=dt_min,
+                    dt_max=dt_max,
+                    dt_init=dt_init,
+                    dt_scale=dt_scale,
+                    dt_init_floor=dt_init_floor,
+                    initialize=initialize,
+                    forward_type=forward_type if scan_mode == 'omni' else 'v0',  # 消融实验 #4: standard模式用v0
+                    channel_first=(not channels_last),
                 )
             else:
-                # channels_first格式：使用Conv2d
-                self.vmamba_2d = nn.Sequential(
-                    nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim),
-                    nn.GELU(),
-                    nn.Conv2d(dim, dim, kernel_size=1),
+                # 占位符
+                if channels_last:
+                    self.vmamba_2d = nn.Sequential(
+                        nn.LayerNorm(dim),
+                        nn.Linear(dim, dim),
+                        nn.GELU(),
+                    )
+                else:
+                    self.vmamba_2d = nn.Sequential(
+                        nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim),
+                        nn.GELU(),
+                        nn.Conv2d(dim, dim, kernel_size=1),
+                    )
+            self.vmamba_axial = None
+            self.vmamba_coronal = None
+            self.vmamba_sagittal = None
+        else:
+            # 消融实验 #3: 独立参数，实例化三个独立模块
+            if SS2D is not None:
+                self.vmamba_axial = SS2D(
+                    d_model=dim, d_state=d_state, ssm_ratio=ssm_ratio, dt_rank=dt_rank,
+                    d_conv=d_conv, conv_bias=conv_bias, dropout=dropout, bias=bias,
+                    dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
+                    dt_init_floor=dt_init_floor, initialize=initialize,
+                    forward_type=forward_type if scan_mode == 'omni' else 'v0',
+                    channel_first=(not channels_last),
                 )
-
-        # 可选：视图融合权重（可学习）
-        if reconstruction_mode == 'weighted':
-            self.view_weights = nn.Parameter(torch.ones(3) / 3.0)
+                self.vmamba_coronal = SS2D(
+                    d_model=dim, d_state=d_state, ssm_ratio=ssm_ratio, dt_rank=dt_rank,
+                    d_conv=d_conv, conv_bias=conv_bias, dropout=dropout, bias=bias,
+                    dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
+                    dt_init_floor=dt_init_floor, initialize=initialize,
+                    forward_type=forward_type if scan_mode == 'omni' else 'v0',
+                    channel_first=(not channels_last),
+                )
+                self.vmamba_sagittal = SS2D(
+                    d_model=dim, d_state=d_state, ssm_ratio=ssm_ratio, dt_rank=dt_rank,
+                    d_conv=d_conv, conv_bias=conv_bias, dropout=dropout, bias=bias,
+                    dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
+                    dt_init_floor=dt_init_floor, initialize=initialize,
+                    forward_type=forward_type if scan_mode == 'omni' else 'v0',
+                    channel_first=(not channels_last),
+                )
+            else:
+                # 占位符
+                if channels_last:
+                    self.vmamba_axial = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
+                    self.vmamba_coronal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
+                    self.vmamba_sagittal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
+                else:
+                    self.vmamba_axial = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
+                    self.vmamba_coronal = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
+                    self.vmamba_sagittal = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
+            self.vmamba_2d = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -257,47 +382,98 @@ class TriViewVMambaBlock(nn.Module):
         B, C, D, H, W = x.shape
         identity = x if self.use_residual else None
 
-        # Step 1: 三视图投影 - 将3D解耦为三个2D视图
-        axial, coronal, sagittal = self.projection(x)
-        # axial: (B, C, H, W)
-        # coronal: (B, C, D, W)
-        # sagittal: (B, C, D, H)
+        # 消融实验 #2: 单视图降级版
+        if self.view_mode == 'single':
+            # 只处理轴状位视图 (B, C, H, W)
+            axial = x.mean(dim=2)  # 沿D维度平均投影
+            axial_out = self._process_view(axial, 'axial')
+            # 重建回3D: (B, C, H, W) -> (B, C, D, H, W)
+            out = axial_out.unsqueeze(2).expand(B, C, D, H, W)
 
-        # Step 2: 参数共享的2D VMamba扫描
-        # 注意：三个视图共享同一个vmamba_2d模块，实现参数共享
+        # 消融实验 #3, #4, #5, #6: 三视图版本
+        else:  # view_mode == 'tri'
+            # Step 1: 三视图投影
+            axial, coronal, sagittal = self.projection(x)
+            # axial: (B, C, H, W)
+            # coronal: (B, C, D, W)
+            # sagittal: (B, C, D, H)
 
-        # 处理axial视图 (B, C, H, W) - 已经是标准2D格式
-        if self.channels_last:
-            axial = axial.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
-        axial_out = self.vmamba_2d(axial)
-        if self.channels_last:
-            axial_out = axial_out.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+            # Step 2: 参数共享或独立参数的2D VMamba扫描
+            axial_out = self._process_view(axial, 'axial')
+            coronal_out = self._process_view(coronal, 'coronal')
+            sagittal_out = self._process_view(sagittal, 'sagittal')
 
-        # 处理coronal视图 (B, C, D, W) - 将D和W视为H和W
-        if self.channels_last:
-            coronal = coronal.permute(0, 2, 3, 1).contiguous()  # (B, D, W, C)
-        coronal_out = self.vmamba_2d(coronal)
-        if self.channels_last:
-            coronal_out = coronal_out.permute(0, 3, 1, 2).contiguous()  # (B, C, D, W)
-
-        # 处理sagittal视图 (B, C, D, H) - 将D和H视为H和W
-        if self.channels_last:
-            sagittal = sagittal.permute(0, 2, 3, 1).contiguous()  # (B, D, H, C)
-        sagittal_out = self.vmamba_2d(sagittal)
-        if self.channels_last:
-            sagittal_out = sagittal_out.permute(0, 3, 1, 2).contiguous()  # (B, C, D, H)
-
-        # Step 3: 三视图重建 - 将三个2D视图重建回3D
-        # 将权重传入重建模块（如果使用weighted模式）
-        out = self.reconstruction(
-            axial_out, coronal_out, sagittal_out,
-            target_shape=(D, H, W),
-            weights=self.view_weights if hasattr(self, 'view_weights') else None
-        )
+            # Step 3: 三视图重建
+            out = self.reconstruction(
+                axial_out, coronal_out, sagittal_out,
+                target_shape=(D, H, W),
+                weights=self.view_weights
+            )
 
         # Step 4: 残差连接
         if self.use_residual and identity is not None:
             out = out + identity
+
+        return out
+
+    def _process_view(self, view: torch.Tensor, view_name: str) -> torch.Tensor:
+        """
+        处理单个视图，支持局部滑窗和全局平铺两种模式
+
+        Args:
+            view: 输入视图 (B, C, H, W)
+            view_name: 视图名称 ('axial', 'coronal', 'sagittal')
+        Returns:
+            out: 处理后的视图 (B, C, H, W)
+        """
+        B, C, H, W = view.shape
+
+        # 消融实验 #5: 全局平铺版 (use_local_window=False)
+        if not self.use_local_window:
+            # 直接全局扫描，不分窗
+            if self.channels_last:
+                view = view.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
+
+            # 根据 share_weights 选择模块
+            if self.share_weights:
+                out = self.vmamba_2d(view)
+            else:
+                if view_name == 'axial':
+                    out = self.vmamba_axial(view)
+                elif view_name == 'coronal':
+                    out = self.vmamba_coronal(view)
+                else:  # sagittal
+                    out = self.vmamba_sagittal(view)
+
+            if self.channels_last:
+                out = out.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+
+        # 消融实验 #3, #4, #6: 局部滑窗版 (use_local_window=True)
+        else:
+            # Step 1: 窗口分割
+            windows, (H_pad, W_pad) = window_partition(view, self.window_size)
+            # windows: (B * num_windows, C, window_size, window_size)
+
+            # Step 2: 对每个窗口进行VMamba扫描
+            if self.channels_last:
+                windows = windows.permute(0, 2, 3, 1).contiguous()
+
+            # 根据 share_weights 选择模块
+            if self.share_weights:
+                windows_out = self.vmamba_2d(windows)
+            else:
+                if view_name == 'axial':
+                    windows_out = self.vmamba_axial(windows)
+                elif view_name == 'coronal':
+                    windows_out = self.vmamba_coronal(windows)
+                else:  # sagittal
+                    windows_out = self.vmamba_sagittal(windows)
+
+            if self.channels_last:
+                windows_out = windows_out.permute(0, 3, 1, 2).contiguous()
+
+            # Step 3: 窗口合并
+            out = window_reverse(windows_out, self.window_size, H_pad, W_pad, H, W)
 
         return out
 
@@ -343,8 +519,14 @@ class DepthwiseSeparableConv3d(nn.Module):
 
 class RTHDBlock(nn.Module):
     """
-    完整的RTHD块
+    完整的RTHD块（支持消融实验）
     结合深度可分离卷积和三视图VMamba
+
+    消融实验控制参数：
+    - view_mode: 'tri' (三视图) 或 'single' (仅轴状位)
+    - share_weights: True (参数共享) 或 False (独立参数)
+    - scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描)
+    - use_local_window: True (局部滑窗) 或 False (全局平铺)
     """
     def __init__(
         self,
@@ -358,8 +540,14 @@ class RTHDBlock(nn.Module):
         reconstruction_mode: str = 'broadcast',
         use_ds_conv: bool = True,
         norm_layer: Type[nn.Module] = nn.InstanceNorm3d,
-        norm_kwargs: dict = None,  # 接收来自nnUNet的kwargs
+        norm_kwargs: dict = None,
         act_layer: Type[nn.Module] = nn.GELU,
+        # 消融实验控制参数
+        view_mode: str = 'tri',
+        share_weights: bool = True,
+        scan_mode: str = 'omni',
+        use_local_window: bool = False,
+        window_size: int = 8,
     ):
         """
         Args:
@@ -375,6 +563,11 @@ class RTHDBlock(nn.Module):
             norm_layer: 归一化层
             norm_kwargs: 归一化层参数（如{'eps': 1e-5, 'affine': True}）
             act_layer: 激活函数
+            view_mode: 'tri' (三视图) 或 'single' (仅轴状位) - 消融实验 #2
+            share_weights: True (参数共享) 或 False (独立参数) - 消融实验 #3
+            scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描) - 消融实验 #4
+            use_local_window: True (局部滑窗) 或 False (全局平铺) - 消融实验 #5
+            window_size: 局部窗口大小
         """
         super().__init__()
 
@@ -384,7 +577,7 @@ class RTHDBlock(nn.Module):
         # 归一化
         self.norm1 = norm_layer(dim, **kw)
 
-        # 三视图VMamba
+        # 三视图VMamba（带消融控制参数）
         self.tri_view_vmamba = TriViewVMambaBlock(
             dim=dim,
             d_state=d_state,
@@ -395,6 +588,12 @@ class RTHDBlock(nn.Module):
             projection_mode=projection_mode,
             reconstruction_mode=reconstruction_mode,
             use_residual=False,  # 残差在外层处理
+            # 消融实验控制参数
+            view_mode=view_mode,
+            share_weights=share_weights,
+            scan_mode=scan_mode,
+            use_local_window=use_local_window,
+            window_size=window_size,
         )
 
         # 可选的深度可分离卷积
@@ -454,7 +653,7 @@ if __name__ == "__main__":
 
     # 测试三视图重建
     print("\n2. Testing TriViewReconstruction...")
-    reconstruction = TriViewReconstruction(mode='broadcast')
+    reconstruction = TriViewReconstruction()  # 修复：不再接受mode参数
     x_recon = reconstruction(axial, coronal, sagittal, target_shape=(8, 16, 16))
     print(f"Reconstructed shape: {x_recon.shape}")  # (2, 64, 8, 16, 16)
 
