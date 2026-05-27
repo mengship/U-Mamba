@@ -1,21 +1,21 @@
 import torch
 
-from nnunetv2.training.nnUNetTrainer.nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan import nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan
+from nnunetv2.training.nnUNetTrainer.nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView import nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView
 
 
-class nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan_350epochs_patience50(nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan):
+class nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50(nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView):
     """
-    消融实验 #4: 常规扫描版
+    消融实验 #2: 单视图降级版
     训练配置: 350 epochs, patience 50 (早停)
 
     配置:
-    - view_mode='tri' (三视图)
-    - share_weights=True (参数共享)
-    - scan_mode='standard' (标准双向扫描，非全向)
-    - use_local_window=True (局部滑窗)
+    - view_mode='single' (仅轴状位视图)
+    - share_weights=False (不适用，单视图无需共享)
+    - scan_mode='standard' (标准扫描)
+    - use_local_window=False (全局平铺)
 
     使用方法:
-        nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan_350epochs_patience50
+        nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50
     """
     def configure_optimizers(self):
         """修复：添加configure_optimizers方法以兼容基类调用"""
@@ -31,12 +31,8 @@ class nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan_350epochs_patience50(nnU
         self._early_stop = False
 
     def on_epoch_end(self):
-        # 在调用 super() 之前保存旧的 best_ema
         old_best_ema = self._best_ema
-        # 调用父类方法（会更新 self._best_ema）
         super().on_epoch_end()
-
-        # 比较：如果 _best_ema 没有变化，说明没有改进
 
         if old_best_ema is not None and self._best_ema == old_best_ema:
             self.patience_counter += 1
@@ -47,7 +43,6 @@ class nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan_350epochs_patience50(nnU
                     f'Early stopping triggered at epoch {self.current_epoch}')
                 self._early_stop = True
         else:
-            # 有改进，重置计数器
             self.patience_counter = 0
 
     def run_training(self):

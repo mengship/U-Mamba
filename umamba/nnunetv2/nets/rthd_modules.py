@@ -272,8 +272,9 @@ class TriViewVMambaBlock(nn.Module):
 
         # 方法1: 尝试绝对导入
         try:
-            from umamba.instructions.vmamba import SS2D
-        except ImportError:
+            from umamba.instructions.vmamba import SS2D as SS2D_imported
+            SS2D = SS2D_imported
+        except ImportError as e:
             pass
 
         # 方法2: 尝试相对导入
@@ -285,8 +286,9 @@ class TriViewVMambaBlock(nn.Module):
                 instructions_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))), 'instructions')
                 if os.path.exists(instructions_dir) and instructions_dir not in sys.path:
                     sys.path.insert(0, instructions_dir)
-                from vmamba import SS2D
-            except Exception:
+                from vmamba import SS2D as SS2D_imported
+                SS2D = SS2D_imported
+            except Exception as e:
                 pass
 
         # 方法3: 如果都失败，打印警告并使用占位符

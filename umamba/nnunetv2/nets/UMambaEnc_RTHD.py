@@ -360,7 +360,7 @@ class ResidualMambaEncoder_RTHD(nn.Module):
 
 
 class UNetResDecoder(nn.Module):
-    """解码器（与原始UMambaEnc_3d.py相同）"""
+    """解码器（原始版本，不使用RTHD）"""
     def __init__(self,
                  encoder,
                  num_classes,
@@ -465,6 +465,135 @@ class UNetResDecoder(nn.Module):
         return output
 
 
+class UNetResDecoder_RTHD(nn.Module):
+    """
+    集成RTHD的解码器（完全对称版本）
+    所有stage都使用RTHDBlock，与编码器完全对称
+    """
+    def __init__(self,
+                 encoder,
+                 num_classes,
+                 n_conv_per_stage: Union[int, Tuple[int, ...], List[int]],
+                 deep_supervision,
+                 nonlin_first: bool = False,
+                 rthd_config: dict = None):
+        super().__init__()
+        self.deep_supervision = deep_supervision
+        self.encoder = encoder
+        self.num_classes = num_classes
+        self.rthd_config = rthd_config or {}
+
+        n_stages_encoder = len(encoder.output_channels)
+        if isinstance(n_conv_per_stage, int):
+            n_conv_per_stage = [n_conv_per_stage] * (n_stages_encoder - 1)
+        assert len(n_conv_per_stage) == n_stages_encoder - 1
+
+        print(f"Decoder: Using RTHD for all {n_stages_encoder - 1} stages")
+        print(f"Decoder RTHD config: {self.rthd_config}")
+
+        stages = []
+        upsample_layers = []
+        seg_layers = []
+
+        for s in range(1, n_stages_encoder):
+            input_features_below = encoder.output_channels[-s]
+            input_features_skip = encoder.output_channels[-(s + 1)]
+            stride_for_upsampling = encoder.strides[-s]
+
+            # 上采样层
+            upsample_layers.append(UpsampleLayer(
+                conv_op = encoder.conv_op,
+                input_channels = input_features_below,
+                output_channels = input_features_skip,
+                pool_op_kernel_size = stride_for_upsampling,
+                mode='nearest'
+            ))
+
+            # 构建解码器stage：BasicResBlock + RTHDBlock + 额外的BasicBlockD
+            stage_blocks = [
+                # 第一个块：融合上采样特征和skip connection
+                BasicResBlock(
+                    conv_op = encoder.conv_op,
+                    norm_op = encoder.norm_op,
+                    norm_op_kwargs = encoder.norm_op_kwargs,
+                    nonlin = encoder.nonlin,
+                    nonlin_kwargs = encoder.nonlin_kwargs,
+                    input_channels = 2 * input_features_skip,
+                    output_channels = input_features_skip,
+                    kernel_size = encoder.kernel_sizes[-(s + 1)],
+                    padding=encoder.conv_pad_sizes[-(s + 1)],
+                    stride=1,
+                    use_1x1conv=True
+                ),
+                # 第二个块：RTHD三视图处理
+                RTHDBlock(
+                    dim=input_features_skip,
+                    **self.rthd_config
+                ),
+            ]
+
+            # 额外的卷积块（如果需要）
+            if n_conv_per_stage[s-1] > 2:
+                stage_blocks.extend([
+                    BasicBlockD(
+                        conv_op = encoder.conv_op,
+                        input_channels = input_features_skip,
+                        output_channels = input_features_skip,
+                        kernel_size = encoder.kernel_sizes[-(s + 1)],
+                        stride = 1,
+                        conv_bias = encoder.conv_bias,
+                        norm_op = encoder.norm_op,
+                        norm_op_kwargs = encoder.norm_op_kwargs,
+                        nonlin = encoder.nonlin,
+                        nonlin_kwargs = encoder.nonlin_kwargs,
+                    ) for _ in range(n_conv_per_stage[s-1] - 2)
+                ])
+
+            stages.append(nn.Sequential(*stage_blocks))
+            seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
+
+        self.stages = nn.ModuleList(stages)
+        self.upsample_layers = nn.ModuleList(upsample_layers)
+        self.seg_layers = nn.ModuleList(seg_layers)
+
+    def forward(self, skips):
+        lres_input = skips[-1]
+        seg_outputs = []
+        for s in range(len(self.stages)):
+            x = self.upsample_layers[s](lres_input)
+            x = torch.cat((x, skips[-(s+2)]), 1)
+            x = self.stages[s](x)
+            if self.deep_supervision:
+                seg_outputs.append(self.seg_layers[s](x))
+            elif s == (len(self.stages) - 1):
+                seg_outputs.append(self.seg_layers[-1](x))
+            lres_input = x
+
+        seg_outputs = seg_outputs[::-1]
+
+        if not self.deep_supervision:
+            r = seg_outputs[0]
+        else:
+            r = seg_outputs
+        return r
+
+    def compute_conv_feature_map_size(self, input_size):
+        skip_sizes = []
+        for s in range(len(self.encoder.strides) - 1):
+            skip_sizes.append([i // j for i, j in zip(input_size, self.encoder.strides[s])])
+            input_size = skip_sizes[-1]
+
+        assert len(skip_sizes) == len(self.stages)
+
+        output = np.int64(0)
+        for s in range(len(self.stages)):
+            output += self.stages[s].compute_conv_feature_map_size(skip_sizes[-(s+1)])
+            output += np.prod([self.encoder.output_channels[-(s+2)], *skip_sizes[-(s+1)]], dtype=np.int64)
+            if self.deep_supervision or (s == (len(self.stages) - 1)):
+                output += np.prod([self.num_classes, *skip_sizes[-(s+1)]], dtype=np.int64)
+        return output
+
+
 class UMambaEnc_RTHD(nn.Module):
     """
     UMambaEnc with RTHD
@@ -493,6 +622,7 @@ class UMambaEnc_RTHD(nn.Module):
                  use_rthd: bool = True,
                  rthd_stages: List[int] = None,
                  rthd_config: dict = None,  # 消融实验配置
+                 use_rthd_decoder: bool = True,  # 新增：解码器是否使用RTHD
                  ):
         super().__init__()
         n_blocks_per_stage = n_conv_per_stage
@@ -531,7 +661,24 @@ class UMambaEnc_RTHD(nn.Module):
             rthd_config=rthd_config,  # 传递消融实验配置
         )
 
-        self.decoder = UNetResDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
+        # 创建解码器：根据use_rthd_decoder选择使用RTHD解码器还是原始解码器
+        if use_rthd_decoder:
+            print("Using UNetResDecoder_RTHD (完全对称RTHD解码器)")
+            self.decoder = UNetResDecoder_RTHD(
+                self.encoder,
+                num_classes,
+                n_conv_per_stage_decoder,
+                deep_supervision,
+                rthd_config=rthd_config,
+            )
+        else:
+            print("Using UNetResDecoder (原始卷积解码器)")
+            self.decoder = UNetResDecoder(
+                self.encoder,
+                num_classes,
+                n_conv_per_stage_decoder,
+                deep_supervision,
+            )
 
     def forward(self, x):
         skips = self.encoder(x)
@@ -548,7 +695,8 @@ def get_umamba_enc_rthd_3d_from_plans(
         configuration_manager: ConfigurationManager,
         num_input_channels: int,
         deep_supervision: bool = True,
-        rthd_config: dict = None
+        rthd_config: dict = None,
+        use_rthd_decoder: bool = True  # 新增：是否在解码器使用RTHD
     ):
     """
     从plans创建UMambaEnc_RTHD网络
@@ -565,6 +713,7 @@ def get_umamba_enc_rthd_3d_from_plans(
             - scan_mode: 'omni' or 'standard'
             - use_local_window: True or False
             - window_size: int (default 8)
+        use_rthd_decoder: 是否在解码器使用RTHD（默认True，完全对称）
     """
     num_stages = len(configuration_manager.conv_kernel_sizes)
     dim = len(configuration_manager.conv_kernel_sizes[0])
@@ -600,6 +749,7 @@ def get_umamba_enc_rthd_3d_from_plans(
             'use_rthd': True,  # 启用RTHD
             'rthd_stages': [0, 1, 2, 3, 4],  # 所有stage使用RTHD（完整消融实验配置，共5个stage）
             'rthd_config': default_rthd_config,  # 传递消融实验配置
+            'use_rthd_decoder': use_rthd_decoder,  # 新增：解码器是否使用RTHD
         }
     }
 

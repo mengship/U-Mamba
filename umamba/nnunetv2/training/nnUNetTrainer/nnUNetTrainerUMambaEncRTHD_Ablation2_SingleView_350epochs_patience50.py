@@ -31,8 +31,12 @@ class nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50(nnUNe
         self._early_stop = False
 
     def on_epoch_end(self):
+        # 在调用 super() 之前保存旧的 best_ema
         old_best_ema = self._best_ema
+        # 调用父类方法（会更新 self._best_ema）
         super().on_epoch_end()
+
+        # 比较：如果 _best_ema 没有变化，说明没有改进
 
         if old_best_ema is not None and self._best_ema == old_best_ema:
             self.patience_counter += 1
@@ -43,6 +47,7 @@ class nnUNetTrainerUMambaEncRTHD_Ablation2_SingleView_350epochs_patience50(nnUNe
                     f'Early stopping triggered at epoch {self.current_epoch}')
                 self._early_stop = True
         else:
+            # 有改进，重置计数器
             self.patience_counter = 0
 
     def run_training(self):

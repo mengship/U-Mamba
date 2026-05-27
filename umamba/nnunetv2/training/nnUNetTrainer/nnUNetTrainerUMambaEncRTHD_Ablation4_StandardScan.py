@@ -47,8 +47,11 @@ class nnUNetTrainerUMambaEncRTHD_Ablation4_StandardScan(nnUNetTrainer):
                     'scan_mode': 'standard',  # 标准扫描
                     'use_local_window': True,
                     'window_size': 8,
-                }
-            )
+                },
+
+                use_rthd_decoder=True,  # 解码器也使用RTHD（完全对称）
+
+                )
         else:
             raise NotImplementedError("RTHD currently only supports 3D models")
 

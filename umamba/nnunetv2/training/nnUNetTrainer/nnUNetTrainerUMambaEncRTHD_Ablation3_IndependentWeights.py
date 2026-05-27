@@ -47,8 +47,11 @@ class nnUNetTrainerUMambaEncRTHD_Ablation3_IndependentWeights(nnUNetTrainer):
                     'scan_mode': 'omni',
                     'use_local_window': True,
                     'window_size': 8,
-                }
-            )
+                },
+
+                use_rthd_decoder=True,  # 解码器也使用RTHD（完全对称）
+
+                )
         else:
             raise NotImplementedError("RTHD currently only supports 3D models")
 

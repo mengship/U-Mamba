@@ -47,9 +47,10 @@ class nnUNetTrainerUMambaEncRTHD_Ablation6_FullInnovation(nnUNetTrainer):
                     'view_mode': 'tri',
                     'share_weights': True,
                     'scan_mode': 'omni',
-                    'use_local_window': True,  # 局部滑窗
+                    'use_local_window': True,  # 固定窗口
                     'window_size': 8,
-                }
+                },
+                use_rthd_decoder=True,  # 解码器也使用RTHD（完全对称）
             )
         else:
             raise NotImplementedError("RTHD currently only supports 3D models")
@@ -57,7 +58,8 @@ class nnUNetTrainerUMambaEncRTHD_Ablation6_FullInnovation(nnUNetTrainer):
         print("=" * 80)
         print("消融实验 #6: 完整创新版（最佳配置）")
         print("配置: view_mode='tri', share_weights=True, scan_mode='omni', use_local_window=True")
-        print("所有创新点: ✓ 三视图分解 ✓ 参数共享 ✓ 全向扫描 ✓ 局部滑窗")
+        print("编码器: ✓ 三视图分解 ✓ 参数共享 ✓ 全向扫描 ✓ 固定窗口")
+        print("解码器: ✓ RTHD（完全对称架构）")
         print("=" * 80)
 
         return model

@@ -32,13 +32,15 @@ class nnUNetTrainerUMambaEncRTHD(nnUNetTrainer):
                 dataset_json,
                 configuration_manager,
                 num_input_channels,
-                deep_supervision=enable_deep_supervision
+                deep_supervision=enable_deep_supervision,
+                use_rthd_decoder=True,  # 解码器也使用RTHD（完全对称）
             )
         else:
             raise NotImplementedError("RTHD currently only supports 3D models")
 
         print("UMambaEnc_RTHD: {}".format(model))
-        print("RTHD enabled for stages: [0, 1, 2]")
+        print("编码器: RTHD enabled for stages [0, 1, 2, 3, 4]")
+        print("解码器: RTHD enabled (完全对称架构)")
         print("Expected memory savings: ~70%")
 
         return model
