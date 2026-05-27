@@ -202,7 +202,7 @@ class TriViewVMambaBlock(nn.Module):
         dt_scale: float = 1.0,
         dt_init_floor: float = 1e-4,
         initialize: str = "v0",
-        forward_type: str = "v2",
+        forward_type: str = "v3",  # v2使用"core" backend会报错，改用v3（使用"oflex" backend）
         projection_mode: str = 'mean',
         reconstruction_mode: str = 'broadcast',
         use_residual: bool = True,
