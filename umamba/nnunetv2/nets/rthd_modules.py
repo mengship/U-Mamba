@@ -270,31 +270,50 @@ class TriViewVMambaBlock(nn.Module):
         # 导入SS2D（2D VMamba核心模块）
         SS2D = None
 
-        # 方法1: 尝试绝对导入
+        # 方法1: 尝试从 instructions 目录导入（绝对路径）
         try:
-            from umamba.instructions.vmamba import SS2D as SS2D_imported
+            import sys
+            import os
+            # 获取当前文件的目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # 构建 instructions 目录的路径
+            # 从 nnunetv2/nets/ 向上两级到 umamba/，然后进入 instructions/
+            umamba_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+            instructions_dir = os.path.join(umamba_dir, 'instructions')
+
+            # 添加到 sys.path
+            if os.path.exists(instructions_dir) and instructions_dir not in sys.path:
+                sys.path.insert(0, instructions_dir)
+                print(f"Added to sys.path: {instructions_dir}")
+
+            # 尝试导入
+            from vmamba import SS2D as SS2D_imported
             SS2D = SS2D_imported
-        except ImportError as e:
+            print(f"✅ Successfully imported SS2D from {instructions_dir}")
+        except Exception as e:
+            print(f"Method 1 failed: {e}")
             pass
 
         # 方法2: 尝试相对导入
         if SS2D is None:
             try:
-                import sys
-                import os
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                instructions_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))), 'instructions')
-                if os.path.exists(instructions_dir) and instructions_dir not in sys.path:
-                    sys.path.insert(0, instructions_dir)
-                from vmamba import SS2D as SS2D_imported
+                from umamba.instructions.vmamba import SS2D as SS2D_imported
                 SS2D = SS2D_imported
-            except Exception as e:
+                print("✅ Successfully imported SS2D via umamba.instructions.vmamba")
+            except ImportError as e:
+                print(f"Method 2 failed: {e}")
                 pass
 
-        # 方法3: 如果都失败，打印警告并使用占位符
+        # 方法3: 如果都失败，打印详细错误信息并使用占位符
         if SS2D is None:
-            print("Warning: Cannot import SS2D from vmamba module.")
-            print("Using placeholder conv layers instead.")
+            print("=" * 80)
+            print("❌ ERROR: Cannot import SS2D from vmamba module.")
+            print("Attempted import paths:")
+            print(f"  1. {instructions_dir if 'instructions_dir' in locals() else 'N/A'}")
+            print(f"  2. umamba.instructions.vmamba")
+            print(f"Current sys.path: {sys.path[:3]}...")
+            print("Using placeholder conv layers instead (PERFORMANCE WILL BE DEGRADED).")
+            print("=" * 80)
 
         # 根据 share_weights 决定实例化方式
         if share_weights:

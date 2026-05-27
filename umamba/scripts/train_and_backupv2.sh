@@ -8,7 +8,7 @@ OSS_CLI="oss" # 或者填写完整路径到 oss 可执行文件
 
 LOGFILE="$RESULTS_DIR/train_and_backup_$(date '+%Y%m%d-%H%M%S').log"
 # TRAIN_CMD="nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_350epochs_patience50"
-TRAIN_CMD="nnUNetv2_train 705 3d_fullres 0 -tr "$TRAIN
+TRAIN_CMD="nnUNetv2_train 705 3d_fullres 0 -tr "$TRAIN_NAME
 # eval "$TRAIN_CMD"
 
 echo "$(dirname "$RESULTS_DIR")"
