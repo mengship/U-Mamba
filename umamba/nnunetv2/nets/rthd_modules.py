@@ -457,8 +457,8 @@ class TriViewVMambaBlock(nn.Module):
         # 消融实验 #5: 全局平铺版 (use_local_window=False)
         if not self.use_local_window:
             # 直接全局扫描，不分窗
-            if self.channels_last:
-                view = view.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
+            # SS2D expects channels-last format (B, H, W, C)
+            view = view.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
 
             # 根据 share_weights 选择模块
             if self.share_weights:
@@ -471,8 +471,8 @@ class TriViewVMambaBlock(nn.Module):
                 else:  # sagittal
                     out = self.vmamba_sagittal(view)
 
-            if self.channels_last:
-                out = out.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+            # Convert back to channels-first format (B, C, H, W)
+            out = out.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
 
         # 消融实验 #3, #4, #6: 局部滑窗版 (use_local_window=True)
         else:
@@ -481,8 +481,8 @@ class TriViewVMambaBlock(nn.Module):
             # windows: (B * num_windows, C, window_size, window_size)
 
             # Step 2: 对每个窗口进行VMamba扫描
-            if self.channels_last:
-                windows = windows.permute(0, 2, 3, 1).contiguous()
+            # SS2D expects channels-last format (B, H, W, C)
+            windows = windows.permute(0, 2, 3, 1).contiguous()
 
             # 根据 share_weights 选择模块
             if self.share_weights:
@@ -495,8 +495,8 @@ class TriViewVMambaBlock(nn.Module):
                 else:  # sagittal
                     windows_out = self.vmamba_sagittal(windows)
 
-            if self.channels_last:
-                windows_out = windows_out.permute(0, 3, 1, 2).contiguous()
+            # Convert back to channels-first format (B, C, H, W)
+            windows_out = windows_out.permute(0, 3, 1, 2).contiguous()
 
             # Step 3: 窗口合并
             out = window_reverse(windows_out, self.window_size, H_pad, W_pad, H, W)
