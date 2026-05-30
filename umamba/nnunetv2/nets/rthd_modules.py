@@ -340,7 +340,7 @@ class TriViewVMambaBlock(nn.Module):
                     dt_init_floor=dt_init_floor,
                     initialize=initialize,
                     forward_type=forward_type if scan_mode == 'omni' else 'v0',  # 消融实验 #4: standard模式用v0
-                    channel_first=(not channels_last),
+                    channel_first=False,
                 )
             else:
                 # 占位符
@@ -368,7 +368,7 @@ class TriViewVMambaBlock(nn.Module):
                     dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
                     dt_init_floor=dt_init_floor, initialize=initialize,
                     forward_type=forward_type if scan_mode == 'omni' else 'v0',
-                    channel_first=(not channels_last),
+                    channel_first=False,
                 )
                 self.vmamba_coronal = SS2D(
                     d_model=dim, d_state=d_state, ssm_ratio=ssm_ratio, dt_rank=dt_rank,
@@ -376,7 +376,7 @@ class TriViewVMambaBlock(nn.Module):
                     dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
                     dt_init_floor=dt_init_floor, initialize=initialize,
                     forward_type=forward_type if scan_mode == 'omni' else 'v0',
-                    channel_first=(not channels_last),
+                    channel_first=False,
                 )
                 self.vmamba_sagittal = SS2D(
                     d_model=dim, d_state=d_state, ssm_ratio=ssm_ratio, dt_rank=dt_rank,
@@ -384,7 +384,7 @@ class TriViewVMambaBlock(nn.Module):
                     dt_min=dt_min, dt_max=dt_max, dt_init=dt_init, dt_scale=dt_scale,
                     dt_init_floor=dt_init_floor, initialize=initialize,
                     forward_type=forward_type if scan_mode == 'omni' else 'v0',
-                    channel_first=(not channels_last),
+                    channel_first=False,
                 )
             else:
                 # 占位符
