@@ -24,16 +24,25 @@ class nnUNetTrainerUMambaEncRTHD_350epochs_patience50(nnUNetTrainerUMambaEncRTHD
         old_best_ema = self._best_ema
         super().on_epoch_end()
 
-        if old_best_ema is not None and self._best_ema == old_best_ema:
+        # 修复：使用数值比较而不是相等比较，避免浮点数精度问题
+        if old_best_ema is None:
+            # 第一个 epoch，初始化 best_ema，不算改进
+            self.patience_counter = 0
+        elif self._best_ema > old_best_ema:
+            # 有改进（EMA dice 提升了），重置计数器
+            self.patience_counter = 0
+            self.print_to_log_file(f'EMA dice improved from {old_best_ema:.4f} to {self._best_ema:.4f}')
+        else:
+            # 没有改进
             self.patience_counter += 1
             self.print_to_log_file(
-                f'No improvement in EMA dice. Patience: {self.patience_counter}/{self.patience}')
+                f'No improvement in EMA dice (current: {self._best_ema:.4f}, best: {old_best_ema:.4f}). '
+                f'Patience: {self.patience_counter}/{self.patience}')
             if self.patience_counter >= self.patience:
+                # 注意：此时 current_epoch 已经被 super() 增加了 1
                 self.print_to_log_file(
-                    f'Early stopping triggered at epoch {self.current_epoch}')
+                    f'Early stopping triggered after epoch {self.current_epoch - 1}')
                 self._early_stop = True
-        else:
-            self.patience_counter = 0
 
     def run_training(self):
         self.on_train_start()
