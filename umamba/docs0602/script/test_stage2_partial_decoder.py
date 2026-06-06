@@ -10,14 +10,62 @@ import sys
 import os
 
 # 添加项目路径
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-sys.path.insert(0, project_root)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+umamba_root = os.path.abspath(os.path.join(current_dir, "../.."))
+repo_root = os.path.abspath(os.path.join(current_dir, "../../.."))
 
-from nnunetv2.nets.UMambaEnc_RTHD import UMambaEnc_RTHD
+for path in (repo_root, umamba_root):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+try:
+    from nnunetv2.nets.UMambaEnc_RTHD import UMambaEnc_RTHD
+    IMPORT_ERROR = None
+except ModuleNotFoundError as e:
+    UMambaEnc_RTHD = None
+    IMPORT_ERROR = e
+
+IMPORT_ERROR_REPORTED = False
+
+
+def check_import_ready():
+    """检查模型导入是否就绪，缺依赖时给出明确提示。"""
+    global IMPORT_ERROR_REPORTED
+
+    if IMPORT_ERROR is None:
+        return True
+
+    if IMPORT_ERROR_REPORTED:
+        return False
+
+    print("\n" + "=" * 80)
+    print("❌ 导入 UMambaEnc_RTHD 失败")
+    print("=" * 80)
+    print(f"缺失模块: {IMPORT_ERROR.name}")
+    print(f"完整报错: {IMPORT_ERROR}")
+    print(f"repo_root: {repo_root}")
+    print(f"umamba_root: {umamba_root}")
+
+    if IMPORT_ERROR.name == "dynamic_network_architectures":
+        print("\n这是项目依赖未安装，不是阶段二代码本身的结构错误。")
+        print("请在远程环境执行：")
+        print(f"  cd {umamba_root}")
+        print("  pip install -e .")
+    else:
+        print("\n请先确认当前 Python 环境是否完成项目依赖安装。")
+
+    print("=" * 80)
+    IMPORT_ERROR_REPORTED = True
+    return False
 
 
 def test_decoder_modes():
     """测试三种decoder模式：none, partial, full"""
+    if not check_import_ready():
+        return False
+
     print("\n" + "="*80)
     print("测试阶段二功能：Partial Decoder RTHD")
     print("="*80)
@@ -127,6 +175,9 @@ def test_decoder_modes():
 
 def test_separate_configs():
     """测试encoder/decoder分离配置"""
+    if not check_import_ready():
+        return False
+
     print("\n" + "="*80)
     print("测试阶段二功能：Encoder/Decoder 分离配置")
     print("="*80)
@@ -248,9 +299,20 @@ def test_separate_configs():
 
 def test_forward_pass():
     """测试前向传播（最小smoke test）"""
+    if not check_import_ready():
+        return False
+
     print("\n" + "="*80)
     print("测试前向传播")
     print("="*80)
+
+    print(f"Using device: {device}")
+    if torch.cuda.is_available():
+        print(f"CUDA is available: {torch.cuda.get_device_name(0)}")
+    else:
+        print("CUDA is NOT available")
+        print("真实 SS2D 前向依赖 CUDA，本轮跳过前向 smoke test")
+        return True
 
     # 小尺寸输入用于快速测试
     batch_size = 1
@@ -264,8 +326,9 @@ def test_forward_pass():
     strides = [[1, 1, 1], [2, 2, 2], [2, 2, 2], [2, 2, 2], [2, 2, 2]]
 
     # 创建输入
-    x = torch.randn(batch_size, input_channels, *input_size)
+    x = torch.randn(batch_size, input_channels, *input_size, device=device)
     print(f"输入shape: {x.shape}")
+    print(f"输入device: {x.device}")
 
     # 测试partial模式前向传播
     print("\n" + "-"*80)
@@ -294,6 +357,7 @@ def test_forward_pass():
             decoder_rthd_mode='partial',
             rthd_stages_decoder=[0, 1],
         )
+        model = model.to(device)
         model.eval()
 
         with torch.no_grad():
@@ -301,6 +365,7 @@ def test_forward_pass():
 
         print(f"✓ 前向传播成功")
         print(f"  - 输出shape: {output.shape}")
+        print(f"  - 输出device: {output.device}")
         print(f"  - 期望shape: ({batch_size}, {num_classes}, {input_size[0]}, {input_size[1]}, {input_size[2]})")
 
         # 验证输出shape
@@ -327,6 +392,9 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("阶段二第一步实现验证测试")
     print("="*80)
+    print(f"repo_root: {repo_root}")
+    print(f"umamba_root: {umamba_root}")
+    print(f"Using device: {device}")
 
     success = True
 
