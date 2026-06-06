@@ -20,6 +20,21 @@ from nnunetv2.nets.rthd_modules import (
     RTHDBlock
 )
 
+# 设置 device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"\n{'='*80}")
+print(f"Device Configuration")
+print(f"{'='*80}")
+print(f"Using device: {device}")
+if torch.cuda.is_available():
+    print(f"CUDA is available: {torch.cuda.get_device_name(0)}")
+    print(f"Will test with real SS2D (CUDA-based)")
+else:
+    print(f"CUDA is NOT available")
+    print(f"Tests requiring real SS2D will be skipped")
+    print(f"Only CPU-compatible tests will run")
+print(f"{'='*80}\n")
+
 def test_tri_view_reconstruction_modes():
     """测试TriViewReconstruction的三种模式"""
     print("\n" + "="*80)
@@ -28,14 +43,14 @@ def test_tri_view_reconstruction_modes():
 
     B, C, D, H, W = 2, 64, 8, 16, 16
 
-    # 创建模拟的三视图特征
-    axial = torch.randn(B, C, H, W)
-    coronal = torch.randn(B, C, D, W)
-    sagittal = torch.randn(B, C, D, H)
+    # 创建模拟的三视图特征（放到device上）
+    axial = torch.randn(B, C, H, W, device=device)
+    coronal = torch.randn(B, C, D, W, device=device)
+    sagittal = torch.randn(B, C, D, H, device=device)
 
     # 测试1: broadcast模式
     print("\n1. 测试 broadcast 模式...")
-    recon_broadcast = TriViewReconstruction(dim=None, mode='broadcast')
+    recon_broadcast = TriViewReconstruction(dim=None, mode='broadcast').to(device)
     out_broadcast = recon_broadcast(axial, coronal, sagittal, target_shape=(D, H, W))
     print(f"   输入形状: axial={axial.shape}, coronal={coronal.shape}, sagittal={sagittal.shape}")
     print(f"   输出形状: {out_broadcast.shape}")
@@ -43,8 +58,8 @@ def test_tri_view_reconstruction_modes():
 
     # 测试2: weighted模式
     print("\n2. 测试 weighted 模式...")
-    recon_weighted = TriViewReconstruction(dim=None, mode='weighted')
-    weights = torch.ones(3) / 3.0
+    recon_weighted = TriViewReconstruction(dim=None, mode='weighted').to(device)
+    weights = torch.ones(3, device=device) / 3.0
     out_weighted = recon_weighted(axial, coronal, sagittal, target_shape=(D, H, W), weights=weights)
     print(f"   输入形状: axial={axial.shape}, coronal={coronal.shape}, sagittal={sagittal.shape}")
     print(f"   输出形状: {out_weighted.shape}")
@@ -52,7 +67,7 @@ def test_tri_view_reconstruction_modes():
 
     # 测试3: gated模式
     print("\n3. 测试 gated 模式...")
-    recon_gated = TriViewReconstruction(dim=C, mode='gated')
+    recon_gated = TriViewReconstruction(dim=C, mode='gated').to(device)
     out_gated = recon_gated(axial, coronal, sagittal, target_shape=(D, H, W))
     print(f"   输入形状: axial={axial.shape}, coronal={coronal.shape}, sagittal={sagittal.shape}")
     print(f"   输出形状: {out_gated.shape}")
@@ -69,8 +84,16 @@ def test_tri_view_vmamba_block():
     print("测试 TriViewVMambaBlock 不同配置")
     print("="*80)
 
+    # TriViewVMambaBlock 依赖真实 SS2D，需要 CUDA
+    if not torch.cuda.is_available():
+        print("\n⚠️  跳过 TriViewVMambaBlock 测试")
+        print("   原因: 真实 SS2D 需要 CUDA 支持")
+        print("   如需测试，请在有 CUDA 的环境运行")
+        print("="*80)
+        return
+
     B, C, D, H, W = 2, 64, 8, 16, 16
-    x = torch.randn(B, C, D, H, W)
+    x = torch.randn(B, C, D, H, W, device=device)
 
     # 测试1: 原有的broadcast模式
     print("\n1. 测试 broadcast 重建模式...")
@@ -80,7 +103,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_broadcast = block_broadcast(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_broadcast.shape}")
@@ -94,7 +117,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_weighted = block_weighted(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_weighted.shape}")
@@ -109,7 +132,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_gated = block_gated(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_gated.shape}")
@@ -124,7 +147,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_no_interaction = block_no_interaction(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_no_interaction.shape}")
@@ -141,7 +164,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_interaction = block_interaction(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_interaction.shape}")
@@ -158,7 +181,7 @@ def test_tri_view_vmamba_block():
         view_mode='tri',
         share_weights=True,
         use_local_window=False
-    )
+    ).to(device)
     out_full = block_full(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_full.shape}")
@@ -175,8 +198,16 @@ def test_rthd_block():
     print("测试 RTHDBlock 不同配置")
     print("="*80)
 
+    # RTHDBlock 依赖真实 SS2D，需要 CUDA
+    if not torch.cuda.is_available():
+        print("\n⚠️  跳过 RTHDBlock 测试")
+        print("   原因: 真实 SS2D 需要 CUDA 支持")
+        print("   如需测试，请在有 CUDA 的环境运行")
+        print("="*80)
+        return
+
     B, C, D, H, W = 2, 64, 8, 16, 16
-    x = torch.randn(B, C, D, H, W)
+    x = torch.randn(B, C, D, H, W, device=device)
 
     # 测试1: 原有配置（broadcast + 无交互）
     print("\n1. 测试原有配置（broadcast + 无交互）...")
@@ -185,7 +216,7 @@ def test_rthd_block():
         reconstruction_mode='broadcast',
         cross_view_interaction=False,
         use_ds_conv=True
-    )
+    ).to(device)
     out_original = block_original(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_original.shape}")
@@ -198,7 +229,7 @@ def test_rthd_block():
         reconstruction_mode='gated',
         cross_view_interaction=False,
         use_ds_conv=True
-    )
+    ).to(device)
     out_gated = block_gated(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_gated.shape}")
@@ -213,7 +244,7 @@ def test_rthd_block():
         interaction_mode='post',
         interaction_type='gate',
         use_ds_conv=True
-    )
+    ).to(device)
     out_interaction = block_interaction(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_interaction.shape}")
@@ -228,7 +259,7 @@ def test_rthd_block():
         interaction_mode='post',
         interaction_type='gate',
         use_ds_conv=True
-    )
+    ).to(device)
     out_full = block_full(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_full.shape}")
@@ -245,6 +276,14 @@ def test_shape_compatibility():
     print("测试不同形状的兼容性")
     print("="*80)
 
+    # RTHDBlock 依赖真实 SS2D，需要 CUDA
+    if not torch.cuda.is_available():
+        print("\n⚠️  跳过形状兼容性测试")
+        print("   原因: 真实 SS2D 需要 CUDA 支持")
+        print("   如需测试，请在有 CUDA 的环境运行")
+        print("="*80)
+        return
+
     test_shapes = [
         (2, 64, 8, 16, 16),
         (1, 32, 4, 8, 8),
@@ -253,7 +292,7 @@ def test_shape_compatibility():
 
     for i, (B, C, D, H, W) in enumerate(test_shapes, 1):
         print(f"\n测试形状 {i}: (B={B}, C={C}, D={D}, H={H}, W={W})")
-        x = torch.randn(B, C, D, H, W)
+        x = torch.randn(B, C, D, H, W, device=device)
 
         block = RTHDBlock(
             dim=C,
@@ -262,7 +301,7 @@ def test_shape_compatibility():
             interaction_mode='post',
             interaction_type='gate',
             use_ds_conv=True
-        )
+        ).to(device)
 
         out = block(x)
         assert out.shape == x.shape, f"输出形状不匹配: {out.shape} != {x.shape}"
@@ -279,12 +318,20 @@ def test_backward_compatibility():
     print("测试向后兼容性")
     print("="*80)
 
+    # RTHDBlock 依赖真实 SS2D，需要 CUDA
+    if not torch.cuda.is_available():
+        print("\n⚠️  跳过向后兼容性测试")
+        print("   原因: 真实 SS2D 需要 CUDA 支持")
+        print("   如需测试，请在有 CUDA 的环境运行")
+        print("="*80)
+        return
+
     B, C, D, H, W = 2, 64, 8, 16, 16
-    x = torch.randn(B, C, D, H, W)
+    x = torch.randn(B, C, D, H, W, device=device)
 
     # 不传新参数，应使用默认值
     print("\n1. 测试默认参数配置...")
-    block_default = RTHDBlock(dim=C)
+    block_default = RTHDBlock(dim=C).to(device)
     out_default = block_default(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_default.shape}")
@@ -301,7 +348,7 @@ def test_backward_compatibility():
         share_weights=True,
         scan_mode='omni',
         use_local_window=False
-    )
+    ).to(device)
     out_old = block_old(x)
     print(f"   输入形状: {x.shape}")
     print(f"   输出形状: {out_old.shape}")
@@ -318,29 +365,54 @@ if __name__ == "__main__":
     print("="*80)
 
     try:
-        # 测试1: TriViewReconstruction三种模式
+        # 测试1: TriViewReconstruction三种模式（纯PyTorch，不需要CUDA）
         test_tri_view_reconstruction_modes()
 
-        # 测试2: TriViewVMambaBlock不同配置
-        test_tri_view_vmamba_block()
+        # 测试2-5: 依赖真实SS2D，需要CUDA
+        cuda_dependent_tests = [
+            ("TriViewVMambaBlock", test_tri_view_vmamba_block),
+            ("RTHDBlock", test_rthd_block),
+            ("形状兼容性", test_shape_compatibility),
+            ("向后兼容性", test_backward_compatibility),
+        ]
 
-        # 测试3: RTHDBlock不同配置
-        test_rthd_block()
+        skipped_tests = []
+        passed_tests = []
 
-        # 测试4: 形状兼容性
-        test_shape_compatibility()
-
-        # 测试5: 向后兼容性
-        test_backward_compatibility()
+        for test_name, test_func in cuda_dependent_tests:
+            if not torch.cuda.is_available():
+                skipped_tests.append(test_name)
+            test_func()
+            if torch.cuda.is_available():
+                passed_tests.append(test_name)
 
         print("\n" + "="*80)
-        print("🎉 所有测试通过！")
+        print("测试完成总结")
         print("="*80)
-        print("\n第一版增强功能验证成功：")
-        print("  ✅ gated reconstruction (位置相关门控融合)")
-        print("  ✅ minimal cross-view interaction (最小版跨视图交互)")
-        print("  ✅ 向后兼容性保持")
-        print("  ✅ 所有形状正确")
+
+        if torch.cuda.is_available():
+            print("🎉 所有测试通过！")
+            print("\n第一版增强功能验证成功：")
+            print("  ✅ gated reconstruction (位置相关门控融合)")
+            print("  ✅ minimal cross-view interaction (最小版跨视图交互)")
+            print("  ✅ 向后兼容性保持")
+            print("  ✅ 所有形状正确")
+            print(f"\n已通过测试 ({len(passed_tests) + 1}/{len(cuda_dependent_tests) + 1}):")
+            print("  ✅ TriViewReconstruction (CPU)")
+            for test_name in passed_tests:
+                print(f"  ✅ {test_name} (CUDA)")
+        else:
+            print("⚠️  部分测试完成")
+            print("\n✅ CPU兼容测试通过:")
+            print("  ✅ TriViewReconstruction 三种模式")
+            print("\n⚠️  已跳过的CUDA依赖测试:")
+            for test_name in skipped_tests:
+                print(f"  ⏭  {test_name}")
+            print("\n说明:")
+            print("  - TriViewReconstruction 是纯PyTorch模块，可在CPU运行")
+            print("  - TriViewVMambaBlock/RTHDBlock 使用真实SS2D，需要CUDA")
+            print("  - 要运行完整测试，请在有CUDA的环境中执行")
+
         print("="*80 + "\n")
 
     except Exception as e:
