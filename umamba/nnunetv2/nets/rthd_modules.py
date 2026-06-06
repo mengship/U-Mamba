@@ -131,12 +131,28 @@ class TriViewReconstruction(nn.Module):
     """
     三视图重建模块
     将三个2D视图特征重建回3D体积张量
+
+    支持三种重建模式：
+    - 'broadcast': 简单平均融合
+    - 'weighted': 全局可学习权重 (3,)
+    - 'gated': 位置相关的门控融合 (B, 3, D, H, W)
     """
-    def __init__(self):
+    def __init__(self, dim: int = None, mode: str = 'broadcast'):
         """
-        不再使用mode参数，改为通过forward的weights参数控制
+        Args:
+            dim: 特征维度（仅在gated模式下需要）
+            mode: 重建模式 ('broadcast', 'weighted', 'gated')
         """
         super().__init__()
+        self.mode = mode
+        self.dim = dim
+
+        # gated模式：使用轻量1x1x1卷积生成位置相关的门控
+        if mode == 'gated':
+            if dim is None:
+                raise ValueError("dim must be provided for gated reconstruction mode")
+            # 输入: (B, 3C, D, H, W) -> 输出: (B, 3, D, H, W)
+            self.gate_conv = nn.Conv3d(dim * 3, 3, kernel_size=1, bias=True)
 
     def forward(
         self,
@@ -144,7 +160,7 @@ class TriViewReconstruction(nn.Module):
         coronal: torch.Tensor,  # (B, C, D, W)
         sagittal: torch.Tensor,  # (B, C, D, H)
         target_shape: Tuple[int, int, int],  # (D, H, W)
-        weights: Optional[torch.Tensor] = None  # 可选的可学习权重 (3,)
+        weights: Optional[torch.Tensor] = None  # 可选的可学习权重 (3,) - 仅用于weighted模式
     ) -> torch.Tensor:
         """
         Args:
@@ -152,7 +168,7 @@ class TriViewReconstruction(nn.Module):
             coronal: 冠状位特征 (B, C, D, W)
             sagittal: 矢状位特征 (B, C, D, H)
             target_shape: 目标3D形状 (D, H, W)
-            weights: 可选的融合权重 (3,)，如果提供则使用加权融合
+            weights: 可选的融合权重 (3,)，仅在weighted模式下使用
         Returns:
             x: 重建的3D特征 (B, C, D, H, W)
         """
@@ -164,12 +180,27 @@ class TriViewReconstruction(nn.Module):
         coronal_3d = coronal.unsqueeze(3).expand(B, C, D, H, W)  # (B, C, D, 1, W) -> (B, C, D, H, W)
         sagittal_3d = sagittal.unsqueeze(4).expand(B, C, D, H, W)  # (B, C, D, H, 1) -> (B, C, D, H, W)
 
-        if weights is not None:
-            # 使用Softmax归一化权重，确保融合物理意义正确
+        if self.mode == 'gated':
+            # 门控融合：位置相关的三视图权重
+            # Step 1: 拼接三个视图 (B, 3C, D, H, W)
+            concat_views = torch.cat([axial_3d, coronal_3d, sagittal_3d], dim=1)
+
+            # Step 2: 生成gate logits (B, 3, D, H, W)
+            gate_logits = self.gate_conv(concat_views)
+
+            # Step 3: 在视图维度做softmax (B, 3, D, H, W)
+            gates = F.softmax(gate_logits, dim=1)
+
+            # Step 4: 门控融合
+            x = axial_3d * gates[:, 0:1] + coronal_3d * gates[:, 1:2] + sagittal_3d * gates[:, 2:3]
+
+        elif self.mode == 'weighted' and weights is not None:
+            # 全局可学习权重融合
             attn = F.softmax(weights, dim=0)
             x = axial_3d * attn[0] + coronal_3d * attn[1] + sagittal_3d * attn[2]
-        else:
-            # 平均融合三个视图
+
+        else:  # mode == 'broadcast' or (mode == 'weighted' and weights is None)
+            # 简单平均融合
             x = (axial_3d + coronal_3d + sagittal_3d) / 3.0
 
         return x
@@ -185,6 +216,10 @@ class TriViewVMambaBlock(nn.Module):
     - share_weights: True (参数共享) 或 False (独立参数)
     - scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描)
     - use_local_window: True (局部滑窗) 或 False (全局平铺)
+
+    第一版增强：
+    - reconstruction_mode: 'broadcast', 'weighted', 'gated' (位置相关门控)
+    - cross_view_interaction: 最小版跨视图交互
     """
     def __init__(
         self,
@@ -213,6 +248,10 @@ class TriViewVMambaBlock(nn.Module):
         scan_mode: str = 'omni',  # 'omni' or 'standard'
         use_local_window: bool = False,  # True: 局部滑窗, False: 全局平铺
         window_size: int = 8,  # 局部窗口大小
+        # 第一版增强参数
+        cross_view_interaction: bool = False,  # 是否启用跨视图交互
+        interaction_mode: str = "post",  # 交互模式: 'post' (仅第一版支持)
+        interaction_type: str = "gate",  # 交互类型: 'gate'
     ):
         """
         Args:
@@ -228,7 +267,7 @@ class TriViewVMambaBlock(nn.Module):
             initialize: 初始化方式
             forward_type: 前向传播类型
             projection_mode: 投影模式 ('mean', 'max', 'slice')
-            reconstruction_mode: 重建模式 ('broadcast', 'weighted')
+            reconstruction_mode: 重建模式 ('broadcast', 'weighted', 'gated')
             use_residual: 是否使用残差连接
             channels_last: 2D VMamba是否使用channels_last (B,H,W,C)格式
             view_mode: 'tri' (三视图) 或 'single' (仅轴状位) - 消融实验 #2
@@ -236,11 +275,15 @@ class TriViewVMambaBlock(nn.Module):
             scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描) - 消融实验 #4
             use_local_window: True (局部滑窗) 或 False (全局平铺) - 消融实验 #5
             window_size: 局部窗口大小
+            cross_view_interaction: 是否启用跨视图交互 - 第一版增强
+            interaction_mode: 交互模式 ('post') - 第一版增强
+            interaction_type: 交互类型 ('gate') - 第一版增强
         """
         super().__init__()
         self.dim = dim
         self.use_residual = use_residual
         self.channels_last = channels_last
+        self.reconstruction_mode = reconstruction_mode
 
         # 消融实验控制参数
         self.view_mode = view_mode
@@ -248,6 +291,11 @@ class TriViewVMambaBlock(nn.Module):
         self.scan_mode = scan_mode
         self.use_local_window = use_local_window
         self.window_size = window_size
+
+        # 第一版增强参数
+        self.cross_view_interaction = cross_view_interaction
+        self.interaction_mode = interaction_mode
+        self.interaction_type = interaction_type
 
         # 三视图投影（仅在tri模式下使用）
         if view_mode == 'tri':
@@ -257,7 +305,10 @@ class TriViewVMambaBlock(nn.Module):
 
         # 三视图重建（仅在tri模式下使用）
         if view_mode == 'tri':
-            self.reconstruction = TriViewReconstruction()
+            self.reconstruction = TriViewReconstruction(
+                dim=dim if reconstruction_mode == 'gated' else None,
+                mode=reconstruction_mode
+            )
         else:
             self.reconstruction = None
 
@@ -266,6 +317,30 @@ class TriViewVMambaBlock(nn.Module):
             self.view_weights = nn.Parameter(torch.ones(3) / 3.0)
         else:
             self.view_weights = None
+
+        # 跨视图交互模块（第一版增强）
+        if cross_view_interaction and view_mode == 'tri':
+            # 第一版仅支持 post + gate 组合，严格校验参数
+            if interaction_mode != 'post':
+                raise ValueError(
+                    f"第一版跨视图交互仅支持 interaction_mode='post'，"
+                    f"当前传入: interaction_mode='{interaction_mode}'"
+                )
+            if interaction_type != 'gate':
+                raise ValueError(
+                    f"第一版跨视图交互仅支持 interaction_type='gate'，"
+                    f"当前传入: interaction_type='{interaction_type}'"
+                )
+
+            # 轻量门控交互：使用3D卷积生成对三个视图的修正门控
+            # 输入: fused_3d (B, C, D, H, W) -> 输出: 3个门控 (B, C, D, H, W) 每个
+            self.interaction_gate_conv = nn.Sequential(
+                nn.Conv3d(dim, dim, kernel_size=3, padding=1, groups=dim),  # 深度卷积
+                nn.GELU(),
+                nn.Conv3d(dim, dim * 3, kernel_size=1),  # 逐点卷积，生成3个视图的门控
+            )
+        else:
+            self.interaction_gate_conv = None
 
         # 导入SS2D（2D VMamba核心模块）
         SS2D = None
@@ -321,6 +396,9 @@ class TriViewVMambaBlock(nn.Module):
             print("=" * 80)
 
         # 根据 share_weights 决定实例化方式
+        # 同时记录是否使用真实SS2D，用于_process_view中处理格式
+        self.using_real_ss2d = (SS2D is not None)
+
         if share_weights:
             # 消融实验 #4, #5, #6: 参数共享，只实例化一个模块
             if SS2D is not None:
@@ -343,19 +421,12 @@ class TriViewVMambaBlock(nn.Module):
                     channel_first=False,
                 )
             else:
-                # 占位符
-                if channels_last:
-                    self.vmamba_2d = nn.Sequential(
-                        nn.LayerNorm(dim),
-                        nn.Linear(dim, dim),
-                        nn.GELU(),
-                    )
-                else:
-                    self.vmamba_2d = nn.Sequential(
-                        nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim),
-                        nn.GELU(),
-                        nn.Conv2d(dim, dim, kernel_size=1),
-                    )
+                # 占位符：使用channels_last格式兼容的实现
+                self.vmamba_2d = nn.Sequential(
+                    nn.LayerNorm(dim),
+                    nn.Linear(dim, dim),
+                    nn.GELU(),
+                )
             self.vmamba_axial = None
             self.vmamba_coronal = None
             self.vmamba_sagittal = None
@@ -387,15 +458,10 @@ class TriViewVMambaBlock(nn.Module):
                     channel_first=False,
                 )
             else:
-                # 占位符
-                if channels_last:
-                    self.vmamba_axial = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
-                    self.vmamba_coronal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
-                    self.vmamba_sagittal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
-                else:
-                    self.vmamba_axial = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
-                    self.vmamba_coronal = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
-                    self.vmamba_sagittal = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1, groups=dim), nn.GELU(), nn.Conv2d(dim, dim, 1))
+                # 占位符：使用channels_last格式兼容的实现
+                self.vmamba_axial = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
+                self.vmamba_coronal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
+                self.vmamba_sagittal = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU())
             self.vmamba_2d = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -429,18 +495,79 @@ class TriViewVMambaBlock(nn.Module):
             coronal_out = self._process_view(coronal, 'coronal')
             sagittal_out = self._process_view(sagittal, 'sagittal')
 
-            # Step 3: 三视图重建
+            # Step 3: 跨视图交互（第一版增强 - post模式）
+            if self.cross_view_interaction and self.interaction_mode == 'post':
+                axial_out, coronal_out, sagittal_out = self._apply_cross_view_interaction(
+                    axial_out, coronal_out, sagittal_out, (D, H, W)
+                )
+
+            # Step 4: 三视图重建
             out = self.reconstruction(
                 axial_out, coronal_out, sagittal_out,
                 target_shape=(D, H, W),
                 weights=self.view_weights
             )
 
-        # Step 4: 残差连接
+        # Step 5: 残差连接
         if self.use_residual and identity is not None:
             out = out + identity
 
         return out
+
+    def _apply_cross_view_interaction(
+        self,
+        axial: torch.Tensor,  # (B, C, H, W)
+        coronal: torch.Tensor,  # (B, C, D, W)
+        sagittal: torch.Tensor,  # (B, C, D, H)
+        target_shape: Tuple[int, int, int]  # (D, H, W)
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        跨视图交互（第一版增强 - post模式）
+
+        策略：
+        1. 临时重建一个融合的3D特征
+        2. 通过轻量3D交互模块生成对三个视图的门控引导
+        3. 使用残差式门控修正各视图输出（避免压低特征幅值）
+
+        Args:
+            axial: 轴状位特征 (B, C, H, W)
+            coronal: 冠状位特征 (B, C, D, W)
+            sagittal: 矢状位特征 (B, C, D, H)
+            target_shape: 目标3D形状 (D, H, W)
+
+        Returns:
+            axial_refined, coronal_refined, sagittal_refined: 修正后的视图特征
+        """
+        B, C = axial.shape[:2]
+        D, H, W = target_shape
+
+        # Step 1: 临时重建3D特征（用于生成引导信息）
+        axial_3d = axial.unsqueeze(2).expand(B, C, D, H, W)
+        coronal_3d = coronal.unsqueeze(3).expand(B, C, D, H, W)
+        sagittal_3d = sagittal.unsqueeze(4).expand(B, C, D, H, W)
+        fused_3d = (axial_3d + coronal_3d + sagittal_3d) / 3.0  # 简单平均融合
+
+        # Step 2: 生成三个视图的门控 (B, 3C, D, H, W)
+        gates_3d = self.interaction_gate_conv(fused_3d)  # (B, 3C, D, H, W)
+
+        # Split into three gates
+        gate_axial_3d = torch.tanh(gates_3d[:, 0:C, :, :, :])  # (B, C, D, H, W)，范围[-1, 1]
+        gate_coronal_3d = torch.tanh(gates_3d[:, C:2*C, :, :, :])  # (B, C, D, H, W)
+        gate_sagittal_3d = torch.tanh(gates_3d[:, 2*C:3*C, :, :, :])  # (B, C, D, H, W)
+
+        # Step 3: 投影回各视图并修正
+        # 将3D门控投影回对应的2D视图
+        gate_axial = gate_axial_3d.mean(dim=2)  # (B, C, H, W)
+        gate_coronal = gate_coronal_3d.mean(dim=3)  # (B, C, D, W)
+        gate_sagittal = gate_sagittal_3d.mean(dim=4)  # (B, C, D, H)
+
+        # 残差式门控修正：x + x * gate，初始状态接近identity
+        # gate初值~0时，refined~x，不会压低特征幅值
+        axial_refined = axial + axial * gate_axial
+        coronal_refined = coronal + coronal * gate_coronal
+        sagittal_refined = sagittal + sagittal * gate_sagittal
+
+        return axial_refined, coronal_refined, sagittal_refined
 
     def _process_view(self, view: torch.Tensor, view_name: str) -> torch.Tensor:
         """
@@ -456,9 +583,9 @@ class TriViewVMambaBlock(nn.Module):
 
         # 消融实验 #5: 全局平铺版 (use_local_window=False)
         if not self.use_local_window:
-            # 直接全局扫描，不分窗
-            # SS2D expects channels-last format (B, H, W, C)
-            view = view.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
+            # 统一转换为 channels-last format (B, H, W, C)
+            # 真实SS2D和fallback placeholder (LayerNorm+Linear) 都需要这个格式
+            view = view.permute(0, 2, 3, 1).contiguous()  # (B, C, H, W) -> (B, H, W, C)
 
             # 根据 share_weights 选择模块
             if self.share_weights:
@@ -471,8 +598,8 @@ class TriViewVMambaBlock(nn.Module):
                 else:  # sagittal
                     out = self.vmamba_sagittal(view)
 
-            # Convert back to channels-first format (B, C, H, W)
-            out = out.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+            # 统一转回 channels-first format (B, C, H, W)
+            out = out.permute(0, 3, 1, 2).contiguous()  # (B, H, W, C) -> (B, C, H, W)
 
         # 消融实验 #3, #4, #6: 局部滑窗版 (use_local_window=True)
         else:
@@ -480,9 +607,8 @@ class TriViewVMambaBlock(nn.Module):
             windows, (H_pad, W_pad) = window_partition(view, self.window_size)
             # windows: (B * num_windows, C, window_size, window_size)
 
-            # Step 2: 对每个窗口进行VMamba扫描
-            # SS2D expects channels-last format (B, H, W, C)
-            windows = windows.permute(0, 2, 3, 1).contiguous()
+            # Step 2: 统一转换为 channels-last format
+            windows = windows.permute(0, 2, 3, 1).contiguous()  # (B*nW, C, H, W) -> (B*nW, H, W, C)
 
             # 根据 share_weights 选择模块
             if self.share_weights:
@@ -495,8 +621,8 @@ class TriViewVMambaBlock(nn.Module):
                 else:  # sagittal
                     windows_out = self.vmamba_sagittal(windows)
 
-            # Convert back to channels-first format (B, C, H, W)
-            windows_out = windows_out.permute(0, 3, 1, 2).contiguous()
+            # 统一转回 channels-first format
+            windows_out = windows_out.permute(0, 3, 1, 2).contiguous()  # (B*nW, H, W, C) -> (B*nW, C, H, W)
 
             # Step 3: 窗口合并
             out = window_reverse(windows_out, self.window_size, H_pad, W_pad, H, W)
@@ -542,7 +668,7 @@ class DepthwiseSeparableConv3d(nn.Module):
         x = self.pointwise(x)
         return x
 
-
+# 第一步
 class RTHDBlock(nn.Module):
     """
     完整的RTHD块（支持消融实验）
@@ -553,6 +679,10 @@ class RTHDBlock(nn.Module):
     - share_weights: True (参数共享) 或 False (独立参数)
     - scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描)
     - use_local_window: True (局部滑窗) 或 False (全局平铺)
+
+    第一版增强：
+    - reconstruction_mode: 'broadcast', 'weighted', 'gated' (位置相关门控)
+    - cross_view_interaction: 最小版跨视图交互
     """
     def __init__(
         self,
@@ -574,6 +704,10 @@ class RTHDBlock(nn.Module):
         scan_mode: str = 'omni',
         use_local_window: bool = False,
         window_size: int = 8,
+        # 第一版增强参数
+        cross_view_interaction: bool = False,
+        interaction_mode: str = "post",
+        interaction_type: str = "gate",
     ):
         """
         Args:
@@ -584,7 +718,7 @@ class RTHDBlock(nn.Module):
             d_conv: 深度卷积核大小
             dropout: Dropout比例
             projection_mode: 投影模式
-            reconstruction_mode: 重建模式
+            reconstruction_mode: 重建模式 ('broadcast', 'weighted', 'gated')
             use_ds_conv: 是否使用深度可分离卷积
             norm_layer: 归一化层
             norm_kwargs: 归一化层参数（如{'eps': 1e-5, 'affine': True}）
@@ -594,6 +728,9 @@ class RTHDBlock(nn.Module):
             scan_mode: 'omni' (全向扫描) 或 'standard' (标准扫描) - 消融实验 #4
             use_local_window: True (局部滑窗) 或 False (全局平铺) - 消融实验 #5
             window_size: 局部窗口大小
+            cross_view_interaction: 是否启用跨视图交互 - 第一版增强
+            interaction_mode: 交互模式 ('post') - 第一版增强
+            interaction_type: 交互类型 ('gate') - 第一版增强
         """
         super().__init__()
 
@@ -603,7 +740,7 @@ class RTHDBlock(nn.Module):
         # 归一化
         self.norm1 = norm_layer(dim, **kw)
 
-        # 三视图VMamba（带消融控制参数）
+        # 三视图VMamba（带消融控制参数和第一版增强参数）
         self.tri_view_vmamba = TriViewVMambaBlock(
             dim=dim,
             d_state=d_state,
@@ -620,6 +757,10 @@ class RTHDBlock(nn.Module):
             scan_mode=scan_mode,
             use_local_window=use_local_window,
             window_size=window_size,
+            # 第一版增强参数
+            cross_view_interaction=cross_view_interaction,
+            interaction_mode=interaction_mode,
+            interaction_type=interaction_type,
         )
 
         # 可选的深度可分离卷积

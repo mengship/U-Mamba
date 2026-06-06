@@ -146,7 +146,7 @@ class BasicResBlock(nn.Module):
         y += x
         return self.act2(y)
 
-
+# 第三一步编码器
 class ResidualMambaEncoder_RTHD(nn.Module):
     """
     集成RTHD的编码器
@@ -593,7 +593,7 @@ class UNetResDecoder_RTHD(nn.Module):
                 output += np.prod([self.num_classes, *skip_sizes[-(s+1)]], dtype=np.int64)
         return output
 
-
+# 第二步
 class UMambaEnc_RTHD(nn.Module):
     """
     UMambaEnc with RTHD
@@ -689,6 +689,7 @@ class UMambaEnc_RTHD(nn.Module):
         return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(input_size)
 
 
+# 程序入口
 def get_umamba_enc_rthd_3d_from_plans(
         plans_manager: PlansManager,
         dataset_json: dict,
