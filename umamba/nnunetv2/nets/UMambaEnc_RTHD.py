@@ -467,8 +467,8 @@ class UNetResDecoder(nn.Module):
 
 class UNetResDecoder_RTHD(nn.Module):
     """
-    集成RTHD的解码器（完全对称版本）
-    所有stage都使用RTHDBlock，与编码器完全对称
+    集成RTHD的解码器（支持部分stage使用RTHD）
+    支持三种模式：none（不使用RTHD）、partial（部分stage使用）、full（所有stage使用）
     """
     def __init__(self,
                  encoder,
@@ -476,19 +476,39 @@ class UNetResDecoder_RTHD(nn.Module):
                  n_conv_per_stage: Union[int, Tuple[int, ...], List[int]],
                  deep_supervision,
                  nonlin_first: bool = False,
-                 rthd_config: dict = None):
+                 rthd_config: dict = None,
+                 decoder_rthd_mode: str = "full",
+                 rthd_stages_decoder: List[int] = None):
         super().__init__()
         self.deep_supervision = deep_supervision
         self.encoder = encoder
         self.num_classes = num_classes
         self.rthd_config = rthd_config or {}
+        self.decoder_rthd_mode = decoder_rthd_mode
 
         n_stages_encoder = len(encoder.output_channels)
         if isinstance(n_conv_per_stage, int):
             n_conv_per_stage = [n_conv_per_stage] * (n_stages_encoder - 1)
         assert len(n_conv_per_stage) == n_stages_encoder - 1
 
-        print(f"Decoder: Using RTHD for all {n_stages_encoder - 1} stages")
+        # 确定哪些decoder stage使用RTHD
+        if decoder_rthd_mode == "none":
+            self.rthd_stages_decoder = []
+            print(f"Decoder mode: none")
+        elif decoder_rthd_mode == "partial":
+            # 默认只在前两个decoder stage使用RTHD
+            if rthd_stages_decoder is None:
+                self.rthd_stages_decoder = [0, 1]
+            else:
+                self.rthd_stages_decoder = rthd_stages_decoder
+            print(f"Decoder mode: partial, RTHD stages: {self.rthd_stages_decoder}")
+        elif decoder_rthd_mode == "full":
+            # 所有stage都使用RTHD
+            self.rthd_stages_decoder = list(range(n_stages_encoder - 1))
+            print(f"Decoder mode: full")
+        else:
+            raise ValueError(f"Invalid decoder_rthd_mode: {decoder_rthd_mode}. Must be 'none', 'partial', or 'full'")
+
         print(f"Decoder RTHD config: {self.rthd_config}")
 
         stages = []
@@ -499,6 +519,7 @@ class UNetResDecoder_RTHD(nn.Module):
             input_features_below = encoder.output_channels[-s]
             input_features_skip = encoder.output_channels[-(s + 1)]
             stride_for_upsampling = encoder.strides[-s]
+            decoder_stage_idx = s - 1  # decoder stage index (0-based)
 
             # 上采样层
             upsample_layers.append(UpsampleLayer(
@@ -509,7 +530,10 @@ class UNetResDecoder_RTHD(nn.Module):
                 mode='nearest'
             ))
 
-            # 构建解码器stage：BasicResBlock + RTHDBlock + 额外的BasicBlockD
+            # 判断当前stage是否使用RTHD
+            use_rthd_this_stage = decoder_stage_idx in self.rthd_stages_decoder
+
+            # 构建解码器stage
             stage_blocks = [
                 # 第一个块：融合上采样特征和skip connection
                 BasicResBlock(
@@ -525,29 +549,49 @@ class UNetResDecoder_RTHD(nn.Module):
                     stride=1,
                     use_1x1conv=True
                 ),
-                # 第二个块：RTHD三视图处理
-                RTHDBlock(
-                    dim=input_features_skip,
-                    **self.rthd_config
-                ),
             ]
 
-            # 额外的卷积块（如果需要）
-            if n_conv_per_stage[s-1] > 2:
-                stage_blocks.extend([
-                    BasicBlockD(
-                        conv_op = encoder.conv_op,
-                        input_channels = input_features_skip,
-                        output_channels = input_features_skip,
-                        kernel_size = encoder.kernel_sizes[-(s + 1)],
-                        stride = 1,
-                        conv_bias = encoder.conv_bias,
-                        norm_op = encoder.norm_op,
-                        norm_op_kwargs = encoder.norm_op_kwargs,
-                        nonlin = encoder.nonlin,
-                        nonlin_kwargs = encoder.nonlin_kwargs,
-                    ) for _ in range(n_conv_per_stage[s-1] - 2)
-                ])
+            if use_rthd_this_stage:
+                # 第二个块：RTHD三视图处理
+                stage_blocks.append(
+                    RTHDBlock(
+                        dim=input_features_skip,
+                        **self.rthd_config
+                    )
+                )
+                # 额外的卷积块（如果需要）
+                if n_conv_per_stage[s-1] > 2:
+                    stage_blocks.extend([
+                        BasicBlockD(
+                            conv_op = encoder.conv_op,
+                            input_channels = input_features_skip,
+                            output_channels = input_features_skip,
+                            kernel_size = encoder.kernel_sizes[-(s + 1)],
+                            stride = 1,
+                            conv_bias = encoder.conv_bias,
+                            norm_op = encoder.norm_op,
+                            norm_op_kwargs = encoder.norm_op_kwargs,
+                            nonlin = encoder.nonlin,
+                            nonlin_kwargs = encoder.nonlin_kwargs,
+                        ) for _ in range(n_conv_per_stage[s-1] - 2)
+                    ])
+            else:
+                # 不使用RTHD：只使用卷积块
+                if n_conv_per_stage[s-1] > 1:
+                    stage_blocks.extend([
+                        BasicBlockD(
+                            conv_op = encoder.conv_op,
+                            input_channels = input_features_skip,
+                            output_channels = input_features_skip,
+                            kernel_size = encoder.kernel_sizes[-(s + 1)],
+                            stride = 1,
+                            conv_bias = encoder.conv_bias,
+                            norm_op = encoder.norm_op,
+                            norm_op_kwargs = encoder.norm_op_kwargs,
+                            nonlin = encoder.nonlin,
+                            nonlin_kwargs = encoder.nonlin_kwargs,
+                        ) for _ in range(n_conv_per_stage[s-1] - 1)
+                    ])
 
             stages.append(nn.Sequential(*stage_blocks))
             seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
@@ -621,8 +665,12 @@ class UMambaEnc_RTHD(nn.Module):
                  stem_channels: int = None,
                  use_rthd: bool = True,
                  rthd_stages: List[int] = None,
-                 rthd_config: dict = None,  # 消融实验配置
-                 use_rthd_decoder: bool = True,  # 新增：解码器是否使用RTHD
+                 rthd_config: dict = None,  # 统一配置（向后兼容）
+                 rthd_config_encoder: dict = None,  # 编码器专用配置
+                 rthd_config_decoder: dict = None,  # 解码器专用配置
+                 use_rthd_decoder: bool = True,  # 是否使用RTHD解码器（向后兼容）
+                 decoder_rthd_mode: str = "full",  # 解码器RTHD模式："none", "partial", "full"
+                 rthd_stages_decoder: List[int] = None,  # 解码器使用RTHD的stage列表
                  ):
         super().__init__()
         n_blocks_per_stage = n_conv_per_stage
@@ -639,6 +687,15 @@ class UMambaEnc_RTHD(nn.Module):
 
         assert len(n_blocks_per_stage) == n_stages
         assert len(n_conv_per_stage_decoder) == (n_stages - 1)
+
+        # 处理配置回退逻辑
+        # 优先级：rthd_config_encoder -> rthd_config -> 默认空字典
+        final_encoder_config = rthd_config_encoder if rthd_config_encoder is not None else (rthd_config if rthd_config is not None else {})
+        # 优先级：rthd_config_decoder -> rthd_config -> 默认空字典
+        final_decoder_config = rthd_config_decoder if rthd_config_decoder is not None else (rthd_config if rthd_config is not None else {})
+
+        print(f"Encoder RTHD config: {final_encoder_config}")
+        print(f"Decoder RTHD config: {final_decoder_config}")
 
         self.encoder = ResidualMambaEncoder_RTHD(
             input_size,
@@ -658,26 +715,32 @@ class UMambaEnc_RTHD(nn.Module):
             stem_channels=stem_channels,
             use_rthd=use_rthd,
             rthd_stages=rthd_stages,
-            rthd_config=rthd_config,  # 传递消融实验配置
+            rthd_config=final_encoder_config,  # 使用编码器专用配置
         )
 
-        # 创建解码器：根据use_rthd_decoder选择使用RTHD解码器还是原始解码器
-        if use_rthd_decoder:
-            print("Using UNetResDecoder_RTHD (完全对称RTHD解码器)")
-            self.decoder = UNetResDecoder_RTHD(
-                self.encoder,
-                num_classes,
-                n_conv_per_stage_decoder,
-                deep_supervision,
-                rthd_config=rthd_config,
-            )
-        else:
+        # 处理向后兼容：use_rthd_decoder=False 等价于 decoder_rthd_mode="none"
+        if not use_rthd_decoder:
+            decoder_rthd_mode = "none"
+
+        # 创建解码器：根据decoder_rthd_mode选择
+        if decoder_rthd_mode == "none":
             print("Using UNetResDecoder (原始卷积解码器)")
             self.decoder = UNetResDecoder(
                 self.encoder,
                 num_classes,
                 n_conv_per_stage_decoder,
                 deep_supervision,
+            )
+        else:
+            print(f"Using UNetResDecoder_RTHD (decoder_rthd_mode={decoder_rthd_mode})")
+            self.decoder = UNetResDecoder_RTHD(
+                self.encoder,
+                num_classes,
+                n_conv_per_stage_decoder,
+                deep_supervision,
+                rthd_config=final_decoder_config,  # 使用解码器专用配置
+                decoder_rthd_mode=decoder_rthd_mode,
+                rthd_stages_decoder=rthd_stages_decoder,
             )
 
     def forward(self, x):
@@ -697,7 +760,11 @@ def get_umamba_enc_rthd_3d_from_plans(
         num_input_channels: int,
         deep_supervision: bool = True,
         rthd_config: dict = None,
-        use_rthd_decoder: bool = True  # 新增：是否在解码器使用RTHD
+        rthd_config_encoder: dict = None,
+        rthd_config_decoder: dict = None,
+        use_rthd_decoder: bool = True,
+        decoder_rthd_mode: str = "full",
+        rthd_stages_decoder: List[int] = None
     ):
     """
     从plans创建UMambaEnc_RTHD网络
@@ -708,13 +775,17 @@ def get_umamba_enc_rthd_3d_from_plans(
         configuration_manager: 配置管理器
         num_input_channels: 输入通道数
         deep_supervision: 是否使用深度监督
-        rthd_config: RTHD消融实验配置，包含:
+        rthd_config: RTHD统一配置（向后兼容），包含:
             - view_mode: 'tri' or 'single'
             - share_weights: True or False
             - scan_mode: 'omni' or 'standard'
             - use_local_window: True or False
             - window_size: int (default 8)
-        use_rthd_decoder: 是否在解码器使用RTHD（默认True，完全对称）
+        rthd_config_encoder: 编码器专用RTHD配置（优先级高于rthd_config）
+        rthd_config_decoder: 解码器专用RTHD配置（优先级高于rthd_config）
+        use_rthd_decoder: 是否在解码器使用RTHD（向后兼容，False等价于decoder_rthd_mode="none"）
+        decoder_rthd_mode: 解码器RTHD模式 - "none", "partial", "full" (默认"full")
+        rthd_stages_decoder: 解码器使用RTHD的stage列表（仅在decoder_rthd_mode="partial"时生效）
     """
     num_stages = len(configuration_manager.conv_kernel_sizes)
     dim = len(configuration_manager.conv_kernel_sizes[0])
@@ -749,8 +820,12 @@ def get_umamba_enc_rthd_3d_from_plans(
             'nonlin_kwargs': {'inplace': True},
             'use_rthd': True,  # 启用RTHD
             'rthd_stages': [0, 1, 2, 3, 4],  # 所有stage使用RTHD（完整消融实验配置，共5个stage）
-            'rthd_config': default_rthd_config,  # 传递消融实验配置
-            'use_rthd_decoder': use_rthd_decoder,  # 新增：解码器是否使用RTHD
+            'rthd_config': default_rthd_config,  # 统一配置（向后兼容）
+            'rthd_config_encoder': rthd_config_encoder,  # 编码器专用配置
+            'rthd_config_decoder': rthd_config_decoder,  # 解码器专用配置
+            'use_rthd_decoder': use_rthd_decoder,  # 向后兼容参数
+            'decoder_rthd_mode': decoder_rthd_mode,  # 解码器模式
+            'rthd_stages_decoder': rthd_stages_decoder,  # 解码器RTHD stage列表
         }
     }
 
