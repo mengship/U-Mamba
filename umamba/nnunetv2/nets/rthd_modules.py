@@ -519,6 +519,7 @@ class TriViewVMambaBlock(nn.Module):
                 weights=self.view_weights
             )
 
+
         # Step 5: 残差连接
         if self.use_residual and identity is not None:
             out = out + identity
@@ -678,6 +679,150 @@ class DepthwiseSeparableConv3d(nn.Module):
         x = self.depthwise(x)
         x = self.pointwise(x)
         return x
+
+
+class SemanticSkipFusionGate3d(nn.Module):
+    """
+    语义引导的跳跃连接融合门控（第二版增强）
+
+    在解码器中，skip connection携带编码器的高分辨率细节，但可能包含噪声或不相关特征。
+    本模块通过decoder上下文引导，生成位置相关的门控信号，选择性增强skip中的有用特征。
+
+    策略：
+    1. 临时拼接skip和decoder特征，生成语义感知的门控
+    2. 使用轻量卷积提取cross-context信息
+    3. 单通道空间门控：refined_skip = skip + scale * skip * gate
+
+    Args:
+        dim: 特征维度
+        reduction: 隐藏层降维比例（默认4）
+    """
+    def __init__(self, dim: int, reduction: int = 4):
+        super().__init__()
+        self.dim = dim
+        hidden_dim = max(dim // reduction, 16)
+
+        # 只生成单通道空间gate，降低参数量并避免和通道注意力重复。
+        self.gate_conv = nn.Sequential(
+            nn.Conv3d(2 * dim, hidden_dim, kernel_size=1, bias=False),
+            nn.InstanceNorm3d(hidden_dim, eps=1e-5, affine=True),
+            nn.GELU(),
+            nn.Conv3d(hidden_dim, 1, kernel_size=1, bias=True),
+            nn.Sigmoid()
+        )
+        self.gate_scale = nn.Parameter(torch.tensor(0.1))
+
+    def forward(self, skip: torch.Tensor, decoder: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            skip: 编码器跳跃连接 (B, C, D, H, W)
+            decoder: 解码器上采样特征 (B, C, D', H', W')
+
+        Returns:
+            refined_skip: 门控增强后的skip (B, C, D, H, W)
+        """
+        # 如果decoder和skip空间尺寸不一致，对齐到skip尺寸
+        if decoder.shape[2:] != skip.shape[2:]:
+            decoder = F.interpolate(decoder, size=skip.shape[2:], mode='trilinear', align_corners=False)
+
+        # 临时拼接用于生成gate
+        concat = torch.cat([skip, decoder], dim=1)  # (B, 2C, D, H, W)
+
+        # 生成门控
+        gate = self.gate_conv(concat) * 2.0 - 1.0  # (B, 1, D, H, W), range [-1, 1]
+
+        # 单通道空间门控广播到所有通道，gate_scale控制初始扰动幅度。
+        refined_skip = skip + self.gate_scale * skip * gate
+
+        return refined_skip
+
+
+class BoundaryAttentionHead3d(nn.Module):
+    """
+    边界感知注意力头（第二版增强）
+
+    在分割任务中，边界区域最容易出错。本模块使用方向梯度响应近似边界注意力，
+    以极低成本增强肿瘤轮廓附近的特征。它不同于 HighLowFrequencyRefinement3d 的
+    avg-pool 高频残差补偿，重点关注相邻体素间的方向变化。
+
+    第一版：仅作为attention增强，不返回boundary map，不改变loss
+
+    策略：
+    1. 计算 D/H/W 三个方向的一阶差分响应
+    2. 聚合为单通道边界响应
+    3. 残差式增强：refined = x + scale * x * attn
+
+    Args:
+        dim: 特征维度
+    """
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.attn_scale = nn.Parameter(torch.tensor(0.1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 输入特征 (B, C, D, H, W)
+
+        Returns:
+            refined_x: 边界增强后的特征 (B, C, D, H, W)
+        """
+        # 使用三个空间方向的一阶差分近似边界响应，区别于频域模块的avg-pool高频残差。
+        grad_d = torch.zeros_like(x)
+        grad_h = torch.zeros_like(x)
+        grad_w = torch.zeros_like(x)
+        grad_d[:, :, 1:, :, :] = (x[:, :, 1:, :, :] - x[:, :, :-1, :, :]).abs()
+        grad_h[:, :, :, 1:, :] = (x[:, :, :, 1:, :] - x[:, :, :, :-1, :]).abs()
+        grad_w[:, :, :, :, 1:] = (x[:, :, :, :, 1:] - x[:, :, :, :, :-1]).abs()
+        edge = (grad_d + grad_h + grad_w).mean(dim=1, keepdim=True)
+        edge_mean = edge.mean(dim=(2, 3, 4), keepdim=True).clamp_min(1e-6)
+        attn = torch.sigmoid(edge / edge_mean - 1.0)
+
+        # 残差式注意力增强
+        refined_x = x + self.attn_scale * x * attn  # attn广播到所有通道
+
+        return refined_x
+
+
+class HighLowFrequencyRefinement3d(nn.Module):
+    """
+    高低频结构恢复（第二版增强）
+
+    在解码器上采样过程中，容易丢失高频细节（边缘、纹理）。
+    本模块通过分离高低频成分，用极轻量的可学习残差缩放补偿高频结构。
+
+    第一版：使用平均池化近似低频，避免复杂的FFT/DCT
+
+    策略：
+    1. 低频：avg_pool3d平滑
+    2. 高频：x - low（残差即高频）
+    3. 融合：x + scale * high
+
+    Args:
+        dim: 特征维度
+    """
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.freq_scale = nn.Parameter(torch.full((1, dim, 1, 1, 1), 0.1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 输入特征 (B, C, D, H, W)
+
+        Returns:
+            refined_x: 高频增强后的特征 (B, C, D, H, W)
+        """
+        # 分离低频和高频
+        low = F.avg_pool3d(x, kernel_size=3, stride=1, padding=1)  # (B, C, D, H, W)
+        high = x - low  # (B, C, D, H, W)
+
+        # 参数量只有C个，作为解码阶段的轻量细节补偿。
+        refined_x = x + self.freq_scale * high
+
+        return refined_x
 
 # 第一步
 class RTHDBlock(nn.Module):

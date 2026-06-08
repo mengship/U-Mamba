@@ -469,6 +469,11 @@ class UNetResDecoder_RTHD(nn.Module):
     """
     集成RTHD的解码器（支持部分stage使用RTHD）
     支持三种模式：none（不使用RTHD）、partial（部分stage使用）、full（所有stage使用）
+
+    第二版增强：
+    - SemanticSkipFusionGate: 语义引导的跳跃连接融合
+    - BoundaryAttentionHead: 边界感知注意力
+    - HighLowFrequencyRefinement: 高低频结构恢复
     """
     def __init__(self,
                  encoder,
@@ -478,13 +483,34 @@ class UNetResDecoder_RTHD(nn.Module):
                  nonlin_first: bool = False,
                  rthd_config: dict = None,
                  decoder_rthd_mode: str = "full",
-                 rthd_stages_decoder: List[int] = None):
+                 rthd_stages_decoder: List[int] = None,
+                 # 第二版增强参数（默认全部关闭，向后兼容）
+                 use_skip_fusion_gate: bool = False,
+                 skip_gate_stages: List[int] = None,
+                 skip_gate_reduction: int = 4,
+                 use_boundary_attention_head: bool = False,
+                 use_frequency_refinement: bool = False,
+                 frequency_refinement_stages: List[int] = None):
         super().__init__()
         self.deep_supervision = deep_supervision
         self.encoder = encoder
         self.num_classes = num_classes
         self.rthd_config = rthd_config or {}
         self.decoder_rthd_mode = decoder_rthd_mode
+
+        # 第二版增强参数
+        self.use_skip_fusion_gate = use_skip_fusion_gate
+        self.use_boundary_attention_head = use_boundary_attention_head
+        self.use_frequency_refinement = use_frequency_refinement
+
+        # 默认stage配置
+        if skip_gate_stages is None:
+            skip_gate_stages = [0, 1]
+        if frequency_refinement_stages is None:
+            frequency_refinement_stages = [0, 1]
+
+        self.skip_gate_stages = skip_gate_stages
+        self.frequency_refinement_stages = frequency_refinement_stages
 
         n_stages_encoder = len(encoder.output_channels)
         if isinstance(n_conv_per_stage, int):
@@ -511,9 +537,22 @@ class UNetResDecoder_RTHD(nn.Module):
 
         print(f"Decoder RTHD config: {self.rthd_config}")
 
+        # 第二版增强模块打印信息
+        if use_skip_fusion_gate:
+            print(f"✓ Skip Fusion Gate enabled for stages: {skip_gate_stages}")
+        if use_boundary_attention_head:
+            print(f"✓ Boundary Attention Head enabled")
+        if use_frequency_refinement:
+            print(f"✓ Frequency Refinement enabled for stages: {frequency_refinement_stages}")
+
+        # 导入第二版增强模块
+        from .rthd_modules import SemanticSkipFusionGate3d, BoundaryAttentionHead3d, HighLowFrequencyRefinement3d
+
         stages = []
         upsample_layers = []
         seg_layers = []
+        skip_gates = []  # 第二版：skip fusion gates
+        frequency_refiners = []  # 第二版：frequency refinement modules
 
         for s in range(1, n_stages_encoder):
             input_features_below = encoder.output_channels[-s]
@@ -596,21 +635,66 @@ class UNetResDecoder_RTHD(nn.Module):
             stages.append(nn.Sequential(*stage_blocks))
             seg_layers.append(encoder.conv_op(input_features_skip, num_classes, 1, 1, 0, bias=True))
 
+            # 第二版增强：skip fusion gate
+            if use_skip_fusion_gate and decoder_stage_idx in skip_gate_stages:
+                skip_gates.append(SemanticSkipFusionGate3d(
+                    dim=input_features_skip,
+                    reduction=skip_gate_reduction
+                ))
+            else:
+                skip_gates.append(nn.Identity())
+
+            # 第二版增强：frequency refinement
+            if use_frequency_refinement and decoder_stage_idx in frequency_refinement_stages:
+                frequency_refiners.append(HighLowFrequencyRefinement3d(dim=input_features_skip))
+            else:
+                frequency_refiners.append(nn.Identity())
+
         self.stages = nn.ModuleList(stages)
         self.upsample_layers = nn.ModuleList(upsample_layers)
         self.seg_layers = nn.ModuleList(seg_layers)
+        self.skip_gates = nn.ModuleList(skip_gates)
+        self.frequency_refiners = nn.ModuleList(frequency_refiners)
+
+        # 第二版增强：boundary attention head（只在最后stage使用）
+        if use_boundary_attention_head:
+            final_dim = encoder.output_channels[0]  # 最后一个decoder stage的特征维度
+            self.final_boundary_attention = BoundaryAttentionHead3d(dim=final_dim)
+        else:
+            self.final_boundary_attention = nn.Identity()
 
     def forward(self, skips):
         lres_input = skips[-1]
         seg_outputs = []
         for s in range(len(self.stages)):
-            x = self.upsample_layers[s](lres_input)
-            x = torch.cat((x, skips[-(s+2)]), 1)
+            # 上采样
+            x_up = self.upsample_layers[s](lres_input)
+            skip = skips[-(s+2)]
+
+            # 第二版增强：语义引导skip融合门控
+            if self.use_skip_fusion_gate and s in self.skip_gate_stages:
+                skip = self.skip_gates[s](skip, x_up)
+
+            # 融合skip和decoder特征
+            x = torch.cat((x_up, skip), 1)
+
+            # decoder stage处理
             x = self.stages[s](x)
+
+            # 第二版增强：高低频结构恢复
+            if self.use_frequency_refinement and s in self.frequency_refinement_stages:
+                x = self.frequency_refiners[s](x)
+
+            # 第二版增强：边界注意力（只在最后stage使用）
+            if self.use_boundary_attention_head and s == (len(self.stages) - 1):
+                x = self.final_boundary_attention(x)
+
+            # 分割头
             if self.deep_supervision:
                 seg_outputs.append(self.seg_layers[s](x))
             elif s == (len(self.stages) - 1):
                 seg_outputs.append(self.seg_layers[-1](x))
+
             lres_input = x
 
         seg_outputs = seg_outputs[::-1]
@@ -671,6 +755,13 @@ class UMambaEnc_RTHD(nn.Module):
                  use_rthd_decoder: bool = True,  # 是否使用RTHD解码器（向后兼容）
                  decoder_rthd_mode: str = "full",  # 解码器RTHD模式："none", "partial", "full"
                  rthd_stages_decoder: List[int] = None,  # 解码器使用RTHD的stage列表
+                 # 第二版增强参数（默认全部关闭）
+                 use_skip_fusion_gate: bool = False,
+                 skip_gate_stages: List[int] = None,
+                 skip_gate_reduction: int = 4,
+                 use_boundary_attention_head: bool = False,
+                 use_frequency_refinement: bool = False,
+                 frequency_refinement_stages: List[int] = None,
                  ):
         super().__init__()
         n_blocks_per_stage = n_conv_per_stage
@@ -741,6 +832,13 @@ class UMambaEnc_RTHD(nn.Module):
                 rthd_config=final_decoder_config,  # 使用解码器专用配置
                 decoder_rthd_mode=decoder_rthd_mode,
                 rthd_stages_decoder=rthd_stages_decoder,
+                # 第二版增强参数
+                use_skip_fusion_gate=use_skip_fusion_gate,
+                skip_gate_stages=skip_gate_stages,
+                skip_gate_reduction=skip_gate_reduction,
+                use_boundary_attention_head=use_boundary_attention_head,
+                use_frequency_refinement=use_frequency_refinement,
+                frequency_refinement_stages=frequency_refinement_stages,
             )
 
     def forward(self, x):
@@ -764,7 +862,14 @@ def get_umamba_enc_rthd_3d_from_plans(
         rthd_config_decoder: dict = None,
         use_rthd_decoder: bool = True,
         decoder_rthd_mode: str = "full",
-        rthd_stages_decoder: List[int] = None
+        rthd_stages_decoder: List[int] = None,
+        # 第二版增强参数（默认全部关闭）
+        use_skip_fusion_gate: bool = False,
+        skip_gate_stages: List[int] = None,
+        skip_gate_reduction: int = 4,
+        use_boundary_attention_head: bool = False,
+        use_frequency_refinement: bool = False,
+        frequency_refinement_stages: List[int] = None
     ):
     """
     从plans创建UMambaEnc_RTHD网络
@@ -781,11 +886,23 @@ def get_umamba_enc_rthd_3d_from_plans(
             - scan_mode: 'omni' or 'standard'
             - use_local_window: True or False
             - window_size: int (default 8)
+            - reconstruction_mode: 'broadcast', 'weighted', 'gated'
+            - cross_view_interaction: True or False
+            - interaction_mode: 'post'
+            - interaction_type: 'gate'
         rthd_config_encoder: 编码器专用RTHD配置（优先级高于rthd_config）
         rthd_config_decoder: 解码器专用RTHD配置（优先级高于rthd_config）
         use_rthd_decoder: 是否在解码器使用RTHD（向后兼容，False等价于decoder_rthd_mode="none"）
         decoder_rthd_mode: 解码器RTHD模式 - "none", "partial", "full" (默认"full")
         rthd_stages_decoder: 解码器使用RTHD的stage列表（仅在decoder_rthd_mode="partial"时生效）
+
+        第二版增强参数（默认全部关闭，确保向后兼容）：
+        use_skip_fusion_gate: 是否启用语义引导skip融合门控
+        skip_gate_stages: skip gate作用的stage列表（默认[0,1]）
+        skip_gate_reduction: skip gate隐藏层降维比例（默认4）
+        use_boundary_attention_head: 是否启用边界注意力头
+        use_frequency_refinement: 是否启用高低频结构恢复
+        frequency_refinement_stages: 频率恢复作用的stage列表（默认[0,1]）
     """
     num_stages = len(configuration_manager.conv_kernel_sizes)
     dim = len(configuration_manager.conv_kernel_sizes[0])
@@ -826,6 +943,13 @@ def get_umamba_enc_rthd_3d_from_plans(
             'use_rthd_decoder': use_rthd_decoder,  # 向后兼容参数
             'decoder_rthd_mode': decoder_rthd_mode,  # 解码器模式
             'rthd_stages_decoder': rthd_stages_decoder,  # 解码器RTHD stage列表
+            # 第二版增强参数
+            'use_skip_fusion_gate': use_skip_fusion_gate,
+            'skip_gate_stages': skip_gate_stages,
+            'skip_gate_reduction': skip_gate_reduction,
+            'use_boundary_attention_head': use_boundary_attention_head,
+            'use_frequency_refinement': use_frequency_refinement,
+            'frequency_refinement_stages': frequency_refinement_stages,
         }
     }
 
