@@ -27,6 +27,8 @@ from nnunetv2.nets.rthd_modules import (
     HighLowFrequencyRefinement3d
 )
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def test_semantic_skip_fusion_gate():
     """测试语义引导跳跃连接融合门控"""
@@ -35,12 +37,12 @@ def test_semantic_skip_fusion_gate():
     print("=" * 80)
 
     dim = 64
-    gate = SemanticSkipFusionGate3d(dim=dim, reduction=4)
+    gate = SemanticSkipFusionGate3d(dim=dim, reduction=4).to(device)
 
     # 测试1.1: skip和decoder shape一致
     print("\n1.1 测试相同shape的skip和decoder")
-    skip = torch.randn(2, dim, 8, 16, 16)
-    decoder = torch.randn(2, dim, 8, 16, 16)
+    skip = torch.randn(2, dim, 8, 16, 16, device=device)
+    decoder = torch.randn(2, dim, 8, 16, 16, device=device)
     output = gate(skip, decoder)
     print(f"  Skip shape: {skip.shape}")
     print(f"  Decoder shape: {decoder.shape}")
@@ -50,8 +52,8 @@ def test_semantic_skip_fusion_gate():
 
     # 测试1.2: skip和decoder shape不一致（需要对齐）
     print("\n1.2 测试不同shape的skip和decoder（自动对齐）")
-    skip = torch.randn(2, dim, 16, 32, 32)
-    decoder = torch.randn(2, dim, 8, 16, 16)  # 更小的decoder
+    skip = torch.randn(2, dim, 16, 32, 32, device=device)
+    decoder = torch.randn(2, dim, 8, 16, 16, device=device)  # 更小的decoder
     output = gate(skip, decoder)
     print(f"  Skip shape: {skip.shape}")
     print(f"  Decoder shape: {decoder.shape}")
@@ -61,8 +63,8 @@ def test_semantic_skip_fusion_gate():
 
     # 测试1.3: 检查残差式门控（输出不应该是零）
     print("\n1.3 测试残差式门控效果")
-    skip = torch.randn(2, dim, 8, 16, 16)
-    decoder = torch.randn(2, dim, 8, 16, 16)
+    skip = torch.randn(2, dim, 8, 16, 16, device=device)
+    decoder = torch.randn(2, dim, 8, 16, 16, device=device)
     output = gate(skip, decoder)
     diff = (output - skip).abs().mean().item()
     print(f"  输出与输入差异（平均绝对值）: {diff:.6f}")
@@ -79,11 +81,11 @@ def test_boundary_attention_head():
     print("=" * 80)
 
     dim = 32
-    attn_head = BoundaryAttentionHead3d(dim=dim)
+    attn_head = BoundaryAttentionHead3d(dim=dim).to(device)
 
     # 测试2.1: 输入输出shape一致
     print("\n2.1 测试输入输出shape")
-    x = torch.randn(2, dim, 16, 32, 32)
+    x = torch.randn(2, dim, 16, 32, 32, device=device)
     output = attn_head(x)
     print(f"  Input shape: {x.shape}")
     print(f"  Output shape: {output.shape}")
@@ -92,7 +94,7 @@ def test_boundary_attention_head():
 
     # 测试2.2: 检查注意力增强效果
     print("\n2.2 测试注意力增强效果")
-    x = torch.randn(2, dim, 8, 16, 16)
+    x = torch.randn(2, dim, 8, 16, 16, device=device)
     output = attn_head(x)
     diff = (output - x).abs().mean().item()
     print(f"  输出与输入差异（平均绝对值）: {diff:.6f}")
@@ -109,11 +111,11 @@ def test_high_low_frequency_refinement():
     print("=" * 80)
 
     dim = 48
-    freq_refiner = HighLowFrequencyRefinement3d(dim=dim)
+    freq_refiner = HighLowFrequencyRefinement3d(dim=dim).to(device)
 
     # 测试3.1: 输入输出shape一致
     print("\n3.1 测试输入输出shape")
-    x = torch.randn(2, dim, 12, 24, 24)
+    x = torch.randn(2, dim, 12, 24, 24, device=device)
     output = freq_refiner(x)
     print(f"  Input shape: {x.shape}")
     print(f"  Output shape: {output.shape}")
@@ -122,7 +124,7 @@ def test_high_low_frequency_refinement():
 
     # 测试3.2: 检查频率恢复效果
     print("\n3.2 测试频率恢复效果")
-    x = torch.randn(2, dim, 8, 16, 16)
+    x = torch.randn(2, dim, 8, 16, 16, device=device)
     output = freq_refiner(x)
     diff = (output - x).abs().mean().item()
     print(f"  输出与输入差异（平均绝对值）: {diff:.6f}")
@@ -137,6 +139,13 @@ def test_umamba_enc_rthd_stage_aware():
     print("\n" + "=" * 80)
     print("测试 4: UMambaEnc_RTHD with Stage-Aware Decoder")
     print("=" * 80)
+    print(f"Using device for full network test: {device}")
+
+    if not torch.cuda.is_available():
+        print("\n⚠️  跳过完整网络测试")
+        print("   原因: 真实 SS2D/Mamba CUDA kernel 需要 CUDA tensor")
+        print("=" * 80)
+        return
 
     from nnunetv2.nets.UMambaEnc_RTHD import UMambaEnc_RTHD
     from torch import nn
@@ -210,10 +219,10 @@ def test_umamba_enc_rthd_stage_aware():
         use_boundary_attention_head=True,
         use_frequency_refinement=False,
         frequency_refinement_stages=None,
-    )
+    ).to(device)
 
     # 测试前向传播
-    x = torch.randn(1, input_channels, *input_size)
+    x = torch.randn(1, input_channels, *input_size, device=device)
     print(f"\n  Input shape: {x.shape}")
 
     with torch.no_grad():
@@ -256,7 +265,7 @@ def test_umamba_enc_rthd_stage_aware():
         use_boundary_attention_head=True,
         use_frequency_refinement=False,
         frequency_refinement_stages=None,
-    )
+    ).to(device)
 
     with torch.no_grad():
         output_ds = model_ds(x)
@@ -295,7 +304,7 @@ def test_umamba_enc_rthd_stage_aware():
         use_skip_fusion_gate=False,
         use_boundary_attention_head=False,
         use_frequency_refinement=False,
-    )
+    ).to(device)
 
     with torch.no_grad():
         output_compat = model_compat(x)
@@ -312,6 +321,7 @@ def main():
     print("Stage-Aware Decoder Strategy 测试套件")
     print("=" * 80)
     print("测试第二版增强模块和完整网络")
+    print(f"Using device: {device}")
     print()
 
     try:
