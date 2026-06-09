@@ -4,24 +4,26 @@ from torch import nn
 from nnunetv2.nets.UMambaEnc_RTHD import get_umamba_enc_rthd_3d_from_plans
 
 
-class nnUNetTrainerUMambaEncRTHD_StageAwareDecoder(nnUNetTrainer):
+class nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_Full(nnUNetTrainer):
     """
-    nnUNet Trainer for UMambaEnc RTHD with Stage-Aware Decoder (基础版本)
+    nnUNet Trainer for UMambaEnc RTHD with Full Stage-Aware Decoder Enhancement
 
-    配置：
+    完整配置（Full Model）：
     - Encoder: RTHD enabled (tri-view, omni-scan, gated reconstruction)
     - Decoder: Stage-aware RTHD deployment (partial mode)
       - Low-resolution stages (D4/D3): RTHD
       - High-resolution stages (D2/D1): Standard convolution
-    - No skip fusion gate (留给SkipCalibration变体)
-    - No boundary attention (留给Full Model)
-    - No frequency refinement
+    - Skip Fusion Gate: enabled (stages [0, 1])
+    - Boundary Attention: enabled (final decoder stage)
+    - Frequency Refinement: disabled (不作为主模型，仅保留为可选消融)
 
     实验目的：
-    验证阶段感知解码器部署策略的有效性
+    验证完整的阶段感知解码器恢复策略（Stage-Aware Decoder + Skip Calibration + Boundary Refinement）
+
+    论文主模型名称: RTHD-StageAwareDecoder-Full
 
     使用方法:
-        nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_StageAwareDecoder
+        nnUNetv2_train DATASET_ID CONFIG FOLD -tr nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_Full
     """
 
     @staticmethod
@@ -32,14 +34,14 @@ class nnUNetTrainerUMambaEncRTHD_StageAwareDecoder(nnUNetTrainer):
                                    enable_deep_supervision: bool = True) -> nn.Module:
 
         if len(configuration_manager.patch_size) == 3:
-            # 使用第二版增强配置
+            # Full model: Stage-aware decoder + Skip calibration + Boundary refinement
             model = get_umamba_enc_rthd_3d_from_plans(
                 plans_manager,
                 dataset_json,
                 configuration_manager,
                 num_input_channels,
                 deep_supervision=enable_deep_supervision,
-                # 编码器RTHD配置（第一版增强）
+                # 编码器RTHD配置
                 rthd_config_encoder={
                     "view_mode": "tri",
                     "share_weights": True,
@@ -51,32 +53,34 @@ class nnUNetTrainerUMambaEncRTHD_StageAwareDecoder(nnUNetTrainer):
                     "interaction_mode": "post",
                     "interaction_type": "gate",
                 },
-                # 解码器RTHD配置（第一版增强）
+                # 解码器RTHD配置
                 rthd_config_decoder={
                     "view_mode": "tri",
                     "share_weights": True,
                     "scan_mode": "omni",
-                    "use_local_window": False,  # 解码器不使用局部窗口
+                    "use_local_window": False,
                     "window_size": 8,
                     "reconstruction_mode": "gated",
                     "cross_view_interaction": True,
                     "interaction_mode": "post",
                     "interaction_type": "gate",
                 },
-                # 阶段感知RTHD部署：partial模式，只在D4/D3使用RTHD
+                # 阶段感知RTHD部署：partial模式
                 use_rthd_decoder=True,
                 decoder_rthd_mode="partial",
-                rthd_stages_decoder=[0, 1],  # D4和D3使用RTHD，D2/D1保持卷积
-                # 基础版本：不启用第二版增强（留给后续变体）
-                use_skip_fusion_gate=False,
-                use_boundary_attention_head=False,
-                use_frequency_refinement=False,
+                rthd_stages_decoder=[0, 1],
+                # 完整增强配置
+                use_skip_fusion_gate=True,
+                skip_gate_stages=[0, 1],
+                skip_gate_reduction=4,
+                use_boundary_attention_head=True,
+                use_frequency_refinement=False,  # 不作为主模型，仅保留为可选消融
             )
         else:
             raise NotImplementedError("RTHD currently only supports 3D models")
 
         print("=" * 80)
-        print("UMambaEnc_RTHD with Stage-Aware Decoder (基础版本)")
+        print("UMambaEnc_RTHD: Full Stage-Aware Decoder Enhancement (主模型)")
         print("=" * 80)
         print("编码器配置:")
         print("  - RTHD stages: [0, 1, 2, 3, 4] (全局建模)")
@@ -88,10 +92,17 @@ class nnUNetTrainerUMambaEncRTHD_StageAwareDecoder(nnUNetTrainer):
         print("  - RTHD stages: [0, 1] (D4/D3低分辨率使用RTHD)")
         print("  - Conv stages: [2, 3] (D2/D1高分辨率保持卷积)")
         print()
-        print("增强模块:")
-        print("  - Skip fusion gate: disabled (留给SkipCalibration变体)")
-        print("  - Boundary attention: disabled (留给Full Model)")
-        print("  - Frequency refinement: disabled")
+        print("完整增强模块:")
+        print("  ✓ Semantic-guided Skip Fusion Gate (stages [0, 1], reduction=4)")
+        print("  ✓ Boundary-aware Attention Head (final decoder stage)")
+        print("  - Frequency refinement: disabled (仅保留为可选消融)")
+        print()
+        print("论文描述:")
+        print("  阶段感知的解码器结构恢复策略，通过低分辨率RTHD refinement建模")
+        print("  全局结构、语义引导跳连融合恢复局部细节，并结合边界注意力增强")
+        print("  肿瘤轮廓质量。")
+        print()
+        print("模型名称: RTHD-StageAwareDecoder-Full")
         print("=" * 80)
 
         return model
