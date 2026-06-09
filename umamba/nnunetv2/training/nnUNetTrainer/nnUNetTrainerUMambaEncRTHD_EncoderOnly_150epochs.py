@@ -16,3 +16,7 @@ class nnUNetTrainerUMambaEncRTHD_EncoderOnly_150epochs(nnUNetTrainerUMambaEncRTH
                  unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.num_epochs = 150
+
+    def configure_optimizers(self):
+        """Fix: configure_optimizers calls configure_optimizer in base class"""
+        return self.configure_optimizer()
