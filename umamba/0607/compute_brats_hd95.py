@@ -90,12 +90,22 @@ def compute_case(pred_path: Path, gt_path: Path) -> dict:
     return row
 
 
-def finite_nanmean(values: list[float]) -> float:
+def finite_mean(values: list[float]) -> float:
     arr = np.asarray(values, dtype=float)
-    arr = arr[~np.isnan(arr)]
+    arr = arr[np.isfinite(arr)]
     if arr.size == 0:
         return math.nan
     return float(np.mean(arr))
+
+
+def value_counts(values: list[float]) -> dict:
+    arr = np.asarray(values, dtype=float)
+    return {
+        "num_cases": int(arr.size),
+        "finite": int(np.isfinite(arr).sum()),
+        "nan": int(np.isnan(arr).sum()),
+        "inf": int(np.isinf(arr).sum()),
+    }
 
 
 def main() -> None:
@@ -124,8 +134,9 @@ def main() -> None:
     if missing:
         print(f"Warning: {len(missing)} predictions have no matching GT. First missing: {missing[:5]}")
 
-    means = {region: finite_nanmean([row[region] for row in rows]) for region in REGIONS}
-    means["Mean"] = finite_nanmean(list(means.values()))
+    means = {region: finite_mean([row[region] for row in rows]) for region in REGIONS}
+    counts = {region: value_counts([row[region] for row in rows]) for region in REGIONS}
+    means["Mean"] = finite_mean(list(means.values()))
 
     print("| Region | HD95 |")
     print("|---|---:|")
@@ -133,6 +144,17 @@ def main() -> None:
         value = means[region]
         value_str = "inf" if math.isinf(value) else f"{value:.6f}"
         print(f"| {region} | {value_str} |")
+
+    print()
+    print("| Region | finite | nan | inf | cases |")
+    print("|---|---:|---:|---:|---:|")
+    for region in ["WT", "TC", "ET"]:
+        c = counts[region]
+        print(f"| {region} | {c['finite']} | {c['nan']} | {c['inf']} | {c['num_cases']} |")
+    if any(c["inf"] for c in counts.values()):
+        print()
+        print("Note: inf means one mask is empty while the other is non-empty for that region.")
+        print("The reported HD95 means above average finite cases only; inspect inf counts separately.")
 
     if args.csv:
         csv_path = Path(args.csv)
@@ -147,7 +169,7 @@ def main() -> None:
         json_path = Path(args.json)
         json_path.parent.mkdir(parents=True, exist_ok=True)
         with json_path.open("w") as f:
-            json.dump({"mean": means, "per_case": rows}, f, indent=2)
+            json.dump({"mean": means, "counts": counts, "per_case": rows}, f, indent=2)
         print(f"Saved JSON: {json_path}")
 
 
