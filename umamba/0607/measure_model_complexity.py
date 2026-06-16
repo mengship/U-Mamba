@@ -12,12 +12,13 @@ Examples:
                    nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs \
         --csv /hy-tmp/model_complexity.csv
 
-Optional FLOPs:
+Optional MACs/FLOPs:
     python umamba/0607/measure_model_complexity.py --dataset 705 --trainers ... --flops
 
 Notes:
     - Forward time is measured on one nnU-Net patch, not full sliding-window volume inference.
-    - FLOPs may be unavailable or inaccurate for custom Mamba/SS2D ops.
+    - THOP reports MACs (multiply-accumulate operations). Estimated FLOPs are reported as 2 * MACs.
+    - MACs/FLOPs may be unavailable or inaccurate for custom Mamba/SS2D selective-scan ops.
 """
 
 import argparse
@@ -27,6 +28,7 @@ import time
 from pathlib import Path
 
 import torch
+from torch.nn.modules.conv import _ConvNd, _ConvTransposeNd
 from batchgenerators.utilities.file_and_folder_operations import load_json
 
 from nnunetv2.paths import nnUNet_preprocessed, nnUNet_raw
@@ -116,20 +118,100 @@ def measure_forward(model, dummy, device: torch.device, warmup: int, repeats: in
     return avg_time, peak_memory_gb
 
 
-def try_measure_flops(model, dummy, enabled: bool):
+def _num_elements(x) -> int:
+    if torch.is_tensor(x):
+        return x.numel()
+    if isinstance(x, (list, tuple)):
+        return sum(_num_elements(i) for i in x)
+    return 0
+
+
+def measure_supported_macs_with_hooks(model, dummy, enabled: bool, breakdown_topk: int = 0):
+    """Count supported MACs with explicit hooks.
+
+    This intentionally counts only common dense ops (Conv/ConvTranspose/Linear).
+    It is more transparent than THOP for debugging, but it still misses custom
+    selective-scan kernels used by Mamba/SS2D.
+    """
+    if not enabled:
+        return None, []
+
+    module_names = {module: name for name, module in model.named_modules()}
+    records = []
+    handles = []
+
+    def add_record(module, macs):
+        if macs <= 0:
+            return
+        records.append((
+            module_names.get(module, module.__class__.__name__),
+            module.__class__.__name__,
+            int(macs),
+        ))
+
+    def conv_hook(module, inputs, output):
+        x = inputs[0]
+        if not torch.is_tensor(x) or not torch.is_tensor(output):
+            return
+        kernel_ops = int(module.weight[0].numel())
+        output_elements = int(output.numel())
+        add_record(module, output_elements * kernel_ops)
+
+    def conv_transpose_hook(module, inputs, output):
+        x = inputs[0]
+        if not torch.is_tensor(x):
+            return
+        kernel_spatial = 1
+        for k in module.kernel_size:
+            kernel_spatial *= int(k)
+        output_channels_per_group = module.out_channels // module.groups
+        input_positions = int(x.shape[0] * x.shape[1] * torch.tensor(x.shape[2:]).prod().item())
+        add_record(module, input_positions * output_channels_per_group * kernel_spatial)
+
+    def linear_hook(module, inputs, output):
+        add_record(module, _num_elements(output) * int(module.in_features))
+
+    for module in model.modules():
+        if isinstance(module, _ConvTransposeNd):
+            handles.append(module.register_forward_hook(conv_transpose_hook))
+        elif isinstance(module, _ConvNd):
+            handles.append(module.register_forward_hook(conv_hook))
+        elif isinstance(module, torch.nn.Linear):
+            handles.append(module.register_forward_hook(linear_hook))
+
+    was_training = model.training
+    model.eval()
+    with torch.no_grad():
+        _ = model(dummy)
+    if was_training:
+        model.train()
+
+    for handle in handles:
+        handle.remove()
+
+    total_macs = sum(i[2] for i in records)
+    records.sort(key=lambda i: i[2], reverse=True)
+    if breakdown_topk > 0:
+        records = records[:breakdown_topk]
+    else:
+        records = []
+    return total_macs, records
+
+
+def try_measure_macs_thop(model, dummy, enabled: bool):
     if not enabled:
         return None
     try:
         from thop import profile
     except Exception as e:
-        print(f"FLOPs skipped: cannot import thop ({e})")
+        print(f"MACs skipped: cannot import thop ({e})")
         return None
 
     try:
-        flops, _ = profile(model, inputs=(dummy,), verbose=False)
-        return flops
+        macs, _ = profile(model, inputs=(dummy,), verbose=False)
+        return macs
     except Exception as e:
-        print(f"FLOPs skipped: thop failed ({e})")
+        print(f"MACs skipped: thop failed ({e})")
         return None
 
 
@@ -150,7 +232,14 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--deep-supervision", action="store_true", help="Measure training-style deep supervision output")
-    parser.add_argument("--flops", action="store_true", help="Try to compute FLOPs with thop")
+    parser.add_argument("--flops", action="store_true", help="Compute MACs and estimated FLOPs")
+    parser.add_argument(
+        "--flops-backend",
+        choices=("hook", "thop"),
+        default="hook",
+        help="hook counts supported Conv/Linear MACs transparently; thop is broader but may be inaccurate for Mamba/SS2D",
+    )
+    parser.add_argument("--breakdown-topk", type=int, default=0, help="Print top-k MAC contributors for hook backend")
     parser.add_argument("--csv", default=None)
     args = parser.parse_args()
 
@@ -173,7 +262,13 @@ def main() -> None:
 
         total_params, trainable_params = count_params(model)
         avg_time_s, peak_memory_gb = measure_forward(model, dummy, device, args.warmup, args.repeats)
-        flops = try_measure_flops(model, dummy, args.flops)
+        macs = None
+        mac_records = []
+        if args.flops and args.flops_backend == "hook":
+            macs, mac_records = measure_supported_macs_with_hooks(model, dummy, True, args.breakdown_topk)
+        elif args.flops:
+            macs = try_measure_macs_thop(model, dummy, True)
+        estimated_flops = None if macs is None else 2 * macs
 
         row = {
             "trainer": trainer,
@@ -182,7 +277,8 @@ def main() -> None:
             "input_shape": "x".join(str(i) for i in dummy_shape),
             "params_m": total_params / 1e6,
             "trainable_params_m": trainable_params / 1e6,
-            "flops_g": None if flops is None else flops / 1e9,
+            "macs_g": None if macs is None else macs / 1e9,
+            "estimated_flops_g": None if estimated_flops is None else estimated_flops / 1e9,
             "forward_time_s": avg_time_s,
             "peak_memory_gb": peak_memory_gb,
         }
@@ -191,22 +287,28 @@ def main() -> None:
         print(f"  Input shape: {row['input_shape']}")
         print(f"  Params/M: {row['params_m']:.6f}")
         print(f"  Trainable Params/M: {row['trainable_params_m']:.6f}")
-        print(f"  FLOPs/G: {format_optional(flops, 1e9)}")
+        print(f"  MACs/G: {format_optional(macs, 1e9)}")
+        print(f"  Estimated FLOPs/G (2 x MACs): {format_optional(estimated_flops, 1e9)}")
         print(f"  Forward time/s: {row['forward_time_s']:.6f}")
         print(f"  Peak memory/GB: {format_optional(peak_memory_gb)}")
+        if mac_records:
+            print("  Top MAC contributors:")
+            for name, module_type, module_macs in mac_records:
+                print(f"    {module_macs / 1e9:.6f} G  {name} ({module_type})")
 
         del model, dummy
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
     print()
-    print("| Trainer | Params/M | FLOPs/G | Forward time/s | Peak memory/GB |")
-    print("|---|---:|---:|---:|---:|")
+    print("| Trainer | Params/M | MACs/G | Est. FLOPs/G | Forward time/s | Peak memory/GB |")
+    print("|---|---:|---:|---:|---:|---:|")
     for row in rows:
         print(
             f"| {row['trainer']} | "
             f"{row['params_m']:.6f} | "
-            f"{format_optional(row['flops_g'])} | "
+            f"{format_optional(row['macs_g'])} | "
+            f"{format_optional(row['estimated_flops_g'])} | "
             f"{row['forward_time_s']:.6f} | "
             f"{format_optional(row['peak_memory_gb'])} |"
         )
@@ -221,7 +323,8 @@ def main() -> None:
             "input_shape",
             "params_m",
             "trainable_params_m",
-            "flops_g",
+            "macs_g",
+            "estimated_flops_g",
             "forward_time_s",
             "peak_memory_gb",
         ]

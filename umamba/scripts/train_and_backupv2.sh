@@ -19,3 +19,23 @@ zip -q -r "$ZIP_NAME" "$(basename "$RESULTS_DIR")"
 $OSS_CLI cp "$ZIP_NAME" "$OSS_BUCKET"
 
 # shutdown
+# ZIP_NAME="resultf1-nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs__nnUNetPlans__3d_fullres-0611.zip"
+
+# zip -q -r resultf1-nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs__nnUNetPlans__3d_fullres-0611.zip fold_1
+
+# oss cp resultf1-nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs__nnUNetPlans__3d_fullres-0611.zip oss://backup/
+
+
+# zip -q -r resultf2-nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs__nnUNetPlans__3d_fullres-0611.zip fold_2
+
+# oss cp resultf2-nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs__nnUNetPlans__3d_fullres-0611.zip oss://backup/
+
+######
+# zip -q -r resultf1-nnUNetTrainerUMambaEnc_150epochs-0611.zip fold_1
+
+# oss cp resultf1-nnUNetTrainerUMambaEnc_150epochs-0611.zip oss://backup/
+
+
+# zip -q -r resultf2-nnUNetTrainerUMambaEnc_150epochs-0611.zip fold_2
+
+# oss cp resultf2-nnUNetTrainerUMambaEnc_150epochs-0611.zip oss://backup/
