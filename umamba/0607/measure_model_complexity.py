@@ -8,7 +8,8 @@ input channels, and architecture settings match the selected dataset/plans.
 Examples:
     python umamba/0607/measure_model_complexity.py \
         --dataset 705 \
-        --trainers nnUNetTrainerUMambaEnc_150epochs \
+        --trainers nnUNetTrainer \
+                   nnUNetTrainerUMambaEnc_150epochs \
                    nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs \
         --csv /hy-tmp/model_complexity.csv
 
@@ -40,12 +41,25 @@ from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 
 
 DEFAULT_TRAINERS = [
+    "nnUNetTrainer",
     "nnUNetTrainerUMambaEnc_150epochs",
     "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
 ]
 
+TRAINER_ALIASES = {
+    "nnunet": "nnUNetTrainer",
+    "nnunettrainer": "nnUNetTrainer",
+    "uunet": "nnUNetTrainer",
+    "uuunet": "nnUNetTrainer",
+}
+
+
+def normalize_trainer_name(trainer_name: str) -> str:
+    return TRAINER_ALIASES.get(trainer_name.lower(), trainer_name)
+
 
 def import_trainer_class(trainer_name: str):
+    trainer_name = normalize_trainer_name(trainer_name)
     module = importlib.import_module(f"nnunetv2.training.nnUNetTrainer.{trainer_name}")
     return getattr(module, trainer_name)
 
@@ -73,6 +87,7 @@ def build_model(trainer_name: str, dataset: str, plans_name: str, config_name: s
     dataset_json = load_dataset_json(dataset_name, preprocessed_folder)
     num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
 
+    trainer_name = normalize_trainer_name(trainer_name)
     trainer_cls = import_trainer_class(trainer_name)
     model = trainer_cls.build_network_architecture(
         plans_manager,
@@ -347,6 +362,7 @@ def main() -> None:
     rows = []
 
     for trainer in args.trainers:
+        trainer = normalize_trainer_name(trainer)
         print(f"\nMeasuring {trainer}")
         model, in_channels, patch_size, dataset_name = build_model(
             trainer,
@@ -452,6 +468,7 @@ if __name__ == "__main__":
 # python umamba/0607/measure_model_complexity.py \
 #  --dataset 705 \
 #  --trainers \
+#    nnUNetTrainer \
 #    nnUNetTrainerUMambaEnc_150epochs \
 #    nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs \
 #  --csv /hy-tmp/model_complexity_fold0.csv
