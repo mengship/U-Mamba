@@ -84,6 +84,17 @@ def parse_pred_specs(values: list[str] | None) -> list[tuple[str, Path]]:
 
 
 def load_nifti(path: Path) -> np.ndarray:
+    path = Path(path)
+    if path.name.endswith(".nii.gz"):
+        with path.open("rb") as f:
+            magic = f.read(2)
+        if magic != b"\x1f\x8b":
+            # Some BraTS conversions keep uncompressed NIfTI bytes while naming
+            # files as .nii.gz. nib.load then tries gzip and fails, so bypass
+            # extension-based opener and read the raw NIfTI stream directly.
+            with path.open("rb") as f:
+                file_map = {"image": nib.FileHolder(fileobj=f)}
+                return np.asarray(nib.Nifti1Image.from_file_map(file_map).get_fdata())
     return np.asarray(nib.load(str(path)).get_fdata())
 
 
