@@ -245,6 +245,13 @@ def crop_slices(slices: list[np.ndarray], masks: list[np.ndarray], margin: int) 
     return [arr[r0:r1, c0:c1] for arr in slices]
 
 
+def lock_axes_to_image(ax, image_shape: tuple[int, int]) -> None:
+    height, width = image_shape
+    ax.set_xlim(-0.5, width - 0.5)
+    ax.set_ylim(height - 0.5, -0.5)
+    ax.set_aspect("equal", adjustable="box")
+
+
 def overlay_seg(ax, image_2d: np.ndarray, seg_2d: np.ndarray, alpha: float, contour: bool) -> None:
     ax.imshow(image_2d, cmap="gray", vmin=0, vmax=1)
     for label, color in LABEL_COLORS.items():
@@ -257,6 +264,7 @@ def overlay_seg(ax, image_2d: np.ndarray, seg_2d: np.ndarray, alpha: float, cont
         ax.imshow(rgba, interpolation="nearest")
         if contour:
             ax.contour(mask.astype(float), levels=[0.5], colors=[color], linewidths=0.8)
+    lock_axes_to_image(ax, image_2d.shape)
 
 
 def build_case_data(
@@ -321,6 +329,7 @@ def main() -> None:
     fig, axes = plt.subplots(nrows, ncols, figsize=(fig_width, fig_height), squeeze=False)
 
     used_slices = {}
+    used_shapes = {}
     for row_idx, case_id in enumerate(cases):
         panels, slice_index = build_case_data(
             case_id=case_id,
@@ -334,6 +343,7 @@ def main() -> None:
             crop_margin=args.crop_margin,
         )
         used_slices[case_id] = slice_index
+        used_shapes[case_id] = panels[0].shape
 
         for col_idx, ax in enumerate(axes[row_idx]):
             ax.axis("off")
@@ -341,6 +351,7 @@ def main() -> None:
                 ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
             if col_idx == 0:
                 ax.imshow(panels[0], cmap="gray", vmin=0, vmax=1)
+                lock_axes_to_image(ax, panels[0].shape)
                 ax.text(
                     -0.06,
                     0.5,
@@ -383,7 +394,7 @@ def main() -> None:
     print(f"Saved figure: {out_path}")
     print("Used slices:")
     for case_id, slice_index in used_slices.items():
-        print(f"  {case_id}: {args.axis} slice {slice_index}")
+        print(f"  {case_id}: {args.axis} slice {slice_index}, panel shape {used_shapes[case_id]}")
 
 
 if __name__ == "__main__":
