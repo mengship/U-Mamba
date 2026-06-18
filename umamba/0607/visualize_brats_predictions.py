@@ -17,6 +17,7 @@ Examples:
 
 Notes:
     - Default modality is FLAIR, which maps to nnU-Net channel _0003.
+    - Default view shows the complete brain slice. Add --crop for a tumor-centered zoom-in.
     - Labels are visualized as label 1/2/3 with green/yellow/red overlays.
     - Original BraTS labels 0/1/2/4 are converted to the nnU-Net convention 0/2/1/3.
 """
@@ -295,8 +296,8 @@ def main() -> None:
     parser.add_argument("--modality", default="flair", help="t1/t1ce/t2/flair or 0/1/2/3. Default: flair")
     parser.add_argument("--axis", choices=tuple(AXIS_TO_INDEX), default="axial")
     parser.add_argument("--slice", type=int, default=None, help="Use a fixed slice index instead of max-tumor slice")
-    parser.add_argument("--no-crop", action="store_true", help="Disable tumor-centered cropping")
-    parser.add_argument("--crop-margin", type=int, default=24)
+    parser.add_argument("--crop", action="store_true", help="Enable tumor-centered zoom-in crop")
+    parser.add_argument("--crop-margin", type=int, default=24, help="Margin used only when --crop is enabled")
     parser.add_argument("--alpha", type=float, default=0.48)
     parser.add_argument("--no-contour", action="store_true")
     parser.add_argument("--dpi", type=int, default=300)
@@ -329,7 +330,7 @@ def main() -> None:
             modality=args.modality,
             axis=axis,
             requested_slice=args.slice,
-            crop=not args.no_crop,
+            crop=args.crop,
             crop_margin=args.crop_margin,
         )
         used_slices[case_id] = slice_index
