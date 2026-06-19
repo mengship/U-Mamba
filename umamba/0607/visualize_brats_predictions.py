@@ -285,36 +285,46 @@ def build_case_data(
     image_dir: Path,
     gt_dir: Path,
     pred_specs: list[tuple[str, Path]],
-    modality: str,
+    modality: str | list[str],
     axis: int,
     requested_slice: int | None,
     crop: bool,
     crop_margin: int,
 ) -> tuple[list[np.ndarray], int]:
-    image = load_nifti(find_image_path(image_dir, case_id, modality))
+    # Support loading multiple modalities
+    if isinstance(modality, str):
+        modalities = [modality]
+    else:
+        modalities = modality
+
+    images = [load_nifti(find_image_path(image_dir, case_id, mod)) for mod in modalities]
     gt = normalize_seg_labels(load_nifti(find_seg_path(gt_dir, case_id)))
     preds = [normalize_seg_labels(load_nifti(find_seg_path(pred_dir, case_id))) for _, pred_dir in pred_specs]
 
     # Validate shapes
-    expected_shape = image.shape
+    expected_shape = images[0].shape
+    for i, img in enumerate(images[1:], 1):
+        if img.shape != expected_shape:
+            raise ValueError(f"Shape mismatch for {case_id}: modality 0 {expected_shape} vs modality {i} {img.shape}")
+
     if gt.shape != expected_shape:
-        raise ValueError(f"Shape mismatch for {case_id}: image {image.shape} vs GT {gt.shape}")
+        raise ValueError(f"Shape mismatch for {case_id}: image {expected_shape} vs GT {gt.shape}")
     for i, pred in enumerate(preds):
         if pred.shape != expected_shape:
             pred_name = pred_specs[i][0]
-            raise ValueError(f"Shape mismatch for {case_id}: image {image.shape} vs {pred_name} {pred.shape}")
+            raise ValueError(f"Shape mismatch for {case_id}: image {expected_shape} vs {pred_name} {pred.shape}")
 
     slice_index = requested_slice if requested_slice is not None else choose_slice(gt, axis)
 
     # Validate slice index
-    if not (0 <= slice_index < image.shape[axis]):
-        raise ValueError(f"Invalid slice index {slice_index} for axis {axis} with shape {image.shape}")
+    if not (0 <= slice_index < expected_shape[axis]):
+        raise ValueError(f"Invalid slice index {slice_index} for axis {axis} with shape {expected_shape}")
 
-    image_2d = normalize_image_slice(take_slice(image, axis, slice_index))
+    images_2d = [normalize_image_slice(take_slice(img, axis, slice_index)) for img in images]
     gt_2d = take_slice(gt, axis, slice_index)
     pred_2d = [take_slice(pred, axis, slice_index) for pred in preds]
 
-    panels = [image_2d, gt_2d, *pred_2d]
+    panels = [*images_2d, gt_2d, *pred_2d]
     if crop:
         masks = [gt_2d, *pred_2d]
         panels = crop_slices(panels, masks, crop_margin)
@@ -329,6 +339,7 @@ def main() -> None:
     parser.add_argument("--cases", nargs="+", default=None, help="Case ids, for example BraTS20_Training_011")
     parser.add_argument("--num-cases", type=int, default=3, help="Number of auto-selected cases when --cases is omitted")
     parser.add_argument("--modality", default="flair", help="t1/t1ce/t2/flair or 0/1/2/3. Default: flair")
+    parser.add_argument("--all-modalities", action="store_true", help="Show all 4 modalities (T1, T1CE, T2, FLAIR) instead of just one")
     parser.add_argument("--axis", choices=tuple(AXIS_TO_INDEX), default="axial")
     parser.add_argument("--slice", type=int, default=None, help="Use a fixed slice index instead of max-tumor slice")
     parser.add_argument("--crop", action="store_true", help="Enable tumor-centered zoom-in crop")
@@ -359,7 +370,16 @@ def main() -> None:
     print(f"Processing {len(cases)} cases: {', '.join(cases)}")
 
     axis = AXIS_TO_INDEX[args.axis]
-    column_titles = [args.modality.upper(), "GT", *[name for name, _ in pred_specs]]
+
+    # Determine modalities and column titles
+    if args.all_modalities:
+        modalities = ["t1", "t1ce", "t2", "flair"]
+        modality_titles = ["T1", "T1CE", "T2", "FLAIR"]
+    else:
+        modalities = args.modality
+        modality_titles = [args.modality.upper()]
+
+    column_titles = [*modality_titles, "GT", *[name for name, _ in pred_specs]]
 
     nrows = len(cases)
     ncols = len(column_titles)
@@ -377,7 +397,7 @@ def main() -> None:
                 image_dir=image_dir,
                 gt_dir=gt_dir,
                 pred_specs=pred_specs,
-                modality=args.modality,
+                modality=modalities,
                 axis=axis,
                 requested_slice=args.slice,
                 crop=args.crop,
@@ -386,13 +406,15 @@ def main() -> None:
             used_slices[case_id] = slice_index
             used_shapes[case_id] = panels[0].shape
 
+            num_modalities = len(modality_titles)
+
             for col_idx, ax in enumerate(axes[row_idx]):
                 ax.axis("off")
                 if row_idx == 0:
                     ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
+
+                # Add case ID label on the left
                 if col_idx == 0:
-                    ax.imshow(panels[0], cmap="gray", vmin=0, vmax=1)
-                    lock_axes_to_image(ax, panels[0].shape)
                     ax.text(
                         -0.06,
                         0.5,
@@ -403,10 +425,16 @@ def main() -> None:
                         ha="right",
                         fontsize=8,
                     )
+
+                # Display image modality columns (no overlay)
+                if col_idx < num_modalities:
+                    ax.imshow(panels[col_idx], cmap="gray", vmin=0, vmax=1)
+                    lock_axes_to_image(ax, panels[col_idx].shape)
+                # Display GT and prediction columns (with overlay on first modality)
                 else:
                     overlay_seg(
                         ax,
-                        panels[0],
+                        panels[0],  # Use first modality as background
                         panels[col_idx],
                         alpha=args.alpha,
                         contour=not args.no_contour,
