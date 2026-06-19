@@ -185,13 +185,26 @@ def auto_cases(gt_dir: Path, pred_specs: list[tuple[str, Path]], num_cases: int)
         raise FileNotFoundError(f"No GT .nii/.nii.gz files found in {gt_dir}")
 
     common = set(gt_cases)
-    for _, pred_dir in pred_specs:
+    for name, pred_dir in pred_specs:
         pred_cases = {strip_nii_suffix(p) for p in pred_dir.glob("*.nii*")}
+        if not pred_cases:
+            raise FileNotFoundError(f"No prediction .nii/.nii.gz files found in {pred_dir} for {name}")
+
+        before = len(common)
         common &= pred_cases
+        if len(common) == 0 and before > 0:
+            missing = gt_cases - pred_cases
+            print(f"Warning: No overlap between GT and {name}. Examples of missing cases: {sorted(missing)[:5]}")
 
     cases = sorted(common)
     if not cases:
-        raise FileNotFoundError("No common cases found between GT and prediction directories")
+        raise FileNotFoundError(
+            f"No common cases found between GT and prediction directories.\n"
+            f"GT has {len(gt_cases)} cases, predictions have varying counts.\n"
+            f"Check that case IDs match exactly (case-sensitive)."
+        )
+
+    print(f"Found {len(cases)} common cases, selecting first {min(num_cases, len(cases))}")
     return cases[:num_cases]
 
 
@@ -282,7 +295,21 @@ def build_case_data(
     gt = normalize_seg_labels(load_nifti(find_seg_path(gt_dir, case_id)))
     preds = [normalize_seg_labels(load_nifti(find_seg_path(pred_dir, case_id))) for _, pred_dir in pred_specs]
 
+    # Validate shapes
+    expected_shape = image.shape
+    if gt.shape != expected_shape:
+        raise ValueError(f"Shape mismatch for {case_id}: image {image.shape} vs GT {gt.shape}")
+    for i, pred in enumerate(preds):
+        if pred.shape != expected_shape:
+            pred_name = pred_specs[i][0]
+            raise ValueError(f"Shape mismatch for {case_id}: image {image.shape} vs {pred_name} {pred.shape}")
+
     slice_index = requested_slice if requested_slice is not None else choose_slice(gt, axis)
+
+    # Validate slice index
+    if not (0 <= slice_index < image.shape[axis]):
+        raise ValueError(f"Invalid slice index {slice_index} for axis {axis} with shape {image.shape}")
+
     image_2d = normalize_image_slice(take_slice(image, axis, slice_index))
     gt_2d = take_slice(gt, axis, slice_index)
     pred_2d = [take_slice(pred, axis, slice_index) for pred in preds]
@@ -314,11 +341,23 @@ def main() -> None:
 
     image_dir = Path(args.image_dir)
     gt_dir = Path(args.gt_dir)
+
+    if not image_dir.exists():
+        raise FileNotFoundError(f"Image directory does not exist: {image_dir}")
+    if not gt_dir.exists():
+        raise FileNotFoundError(f"GT directory does not exist: {gt_dir}")
+
     pred_specs = parse_pred_specs(args.pred)
     if not pred_specs:
         raise ValueError("At least one --pred NAME=DIR is required")
 
+    for name, pred_dir in pred_specs:
+        if not pred_dir.exists():
+            raise FileNotFoundError(f"Prediction directory for '{name}' does not exist: {pred_dir}")
+
     cases = [strip_nii_suffix(i) for i in args.cases] if args.cases else auto_cases(gt_dir, pred_specs, args.num_cases)
+    print(f"Processing {len(cases)} cases: {', '.join(cases)}")
+
     axis = AXIS_TO_INDEX[args.axis]
     column_titles = [args.modality.upper(), "GT", *[name for name, _ in pred_specs]]
 
@@ -331,45 +370,50 @@ def main() -> None:
     used_slices = {}
     used_shapes = {}
     for row_idx, case_id in enumerate(cases):
-        panels, slice_index = build_case_data(
-            case_id=case_id,
-            image_dir=image_dir,
-            gt_dir=gt_dir,
-            pred_specs=pred_specs,
-            modality=args.modality,
-            axis=axis,
-            requested_slice=args.slice,
-            crop=args.crop,
-            crop_margin=args.crop_margin,
-        )
-        used_slices[case_id] = slice_index
-        used_shapes[case_id] = panels[0].shape
+        print(f"Processing case {row_idx + 1}/{len(cases)}: {case_id}")
+        try:
+            panels, slice_index = build_case_data(
+                case_id=case_id,
+                image_dir=image_dir,
+                gt_dir=gt_dir,
+                pred_specs=pred_specs,
+                modality=args.modality,
+                axis=axis,
+                requested_slice=args.slice,
+                crop=args.crop,
+                crop_margin=args.crop_margin,
+            )
+            used_slices[case_id] = slice_index
+            used_shapes[case_id] = panels[0].shape
 
-        for col_idx, ax in enumerate(axes[row_idx]):
-            ax.axis("off")
-            if row_idx == 0:
-                ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
-            if col_idx == 0:
-                ax.imshow(panels[0], cmap="gray", vmin=0, vmax=1)
-                lock_axes_to_image(ax, panels[0].shape)
-                ax.text(
-                    -0.06,
-                    0.5,
-                    case_id,
-                    transform=ax.transAxes,
-                    rotation=90,
-                    va="center",
-                    ha="right",
-                    fontsize=8,
-                )
-            else:
-                overlay_seg(
-                    ax,
-                    panels[0],
-                    panels[col_idx],
-                    alpha=args.alpha,
-                    contour=not args.no_contour,
-                )
+            for col_idx, ax in enumerate(axes[row_idx]):
+                ax.axis("off")
+                if row_idx == 0:
+                    ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
+                if col_idx == 0:
+                    ax.imshow(panels[0], cmap="gray", vmin=0, vmax=1)
+                    lock_axes_to_image(ax, panels[0].shape)
+                    ax.text(
+                        -0.06,
+                        0.5,
+                        case_id,
+                        transform=ax.transAxes,
+                        rotation=90,
+                        va="center",
+                        ha="right",
+                        fontsize=8,
+                    )
+                else:
+                    overlay_seg(
+                        ax,
+                        panels[0],
+                        panels[col_idx],
+                        alpha=args.alpha,
+                        contour=not args.no_contour,
+                    )
+        except Exception as e:
+            print(f"Error processing case {case_id}: {e}")
+            raise
 
     legend_handles = [
         Patch(facecolor=LABEL_COLORS[1], edgecolor=LABEL_COLORS[1], label="Edema / WT outer"),
@@ -391,7 +435,7 @@ def main() -> None:
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
 
-    print(f"Saved figure: {out_path}")
+    print(f"\nSaved figure: {out_path}")
     print("Used slices:")
     for case_id, slice_index in used_slices.items():
         print(f"  {case_id}: {args.axis} slice {slice_index}, panel shape {used_shapes[case_id]}")
