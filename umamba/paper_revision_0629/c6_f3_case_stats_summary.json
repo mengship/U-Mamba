@@ -1,0 +1,223 @@
+{
+  "missing_summary_files": [],
+  "fold_mean_std": [
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "mean_dice",
+      "folds": "3",
+      "mean": 0.82578081321851,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "mean_dice",
+      "folds": "3",
+      "mean": 0.8318325191870136,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "WT_dice",
+      "folds": "3",
+      "mean": 0.9041477591518692,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "WT_dice",
+      "folds": "3",
+      "mean": 0.9094443130841225,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "TC_dice",
+      "folds": "3",
+      "mean": 0.8581953908739778,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "TC_dice",
+      "folds": "3",
+      "mean": 0.863598519649856,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "ET_dice",
+      "folds": "3",
+      "mean": 0.7149992896296832,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "ET_dice",
+      "folds": "3",
+      "mean": 0.7224547248270622,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "mean_hd95",
+      "folds": "3",
+      "mean": 6.047660297778437,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "mean_hd95",
+      "folds": "3",
+      "mean": 4.930065903334904,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "WT_hd95",
+      "folds": "3",
+      "mean": 4.930852255905216,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "WT_hd95",
+      "folds": "3",
+      "mean": 4.663296822092683,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "TC_hd95",
+      "folds": "3",
+      "mean": 6.614697839217468,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "TC_hd95",
+      "folds": "3",
+      "mean": 4.907816868793134,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "metric": "ET_hd95",
+      "folds": "3",
+      "mean": 6.3063721926607474,
+      "std": 0.0,
+      "n_folds": 1
+    },
+    {
+      "trainer": "nnUNetTrainerUMambaEnc_150epochs",
+      "metric": "ET_hd95",
+      "folds": "3",
+      "mean": 5.048202013390718,
+      "std": 0.0,
+      "n_folds": 1
+    }
+  ],
+  "paired_tests": [
+    {
+      "metric": "mean_dice",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 0.8318325191870136,
+      "ours_mean": 0.82578081321851,
+      "mean_delta_ours_minus_baseline": -0.0060517059685036055,
+      "paired_t_p": 0.4184530273912864,
+      "wilcoxon_p": 0.5302575001707914
+    },
+    {
+      "metric": "WT_dice",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 0.9094443130841225,
+      "ours_mean": 0.9041477591518692,
+      "mean_delta_ours_minus_baseline": -0.0052965539322534505,
+      "paired_t_p": 0.5303904250394132,
+      "wilcoxon_p": 0.3872301705353153
+    },
+    {
+      "metric": "TC_dice",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 0.863598519649856,
+      "ours_mean": 0.8581953908739778,
+      "mean_delta_ours_minus_baseline": -0.005403128775878238,
+      "paired_t_p": 0.5775927725344822,
+      "wilcoxon_p": 0.10664088164917754
+    },
+    {
+      "metric": "ET_dice",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 0.7224547248270622,
+      "ours_mean": 0.7149992896296832,
+      "mean_delta_ours_minus_baseline": -0.007455435197379112,
+      "paired_t_p": 0.2757046271165218,
+      "wilcoxon_p": 0.5588776197989644
+    },
+    {
+      "metric": "mean_hd95",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 4.930065903334904,
+      "ours_mean": 6.047660297778437,
+      "mean_delta_ours_minus_baseline": 1.1175943944435338,
+      "paired_t_p": 0.3580558903854022,
+      "wilcoxon_p": 0.6587047432180764
+    },
+    {
+      "metric": "WT_hd95",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 4.663296822092683,
+      "ours_mean": 4.930852255905216,
+      "mean_delta_ours_minus_baseline": 0.26755543381253305,
+      "paired_t_p": 0.8550127047314648,
+      "wilcoxon_p": 0.8877785028690663
+    },
+    {
+      "metric": "TC_hd95",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 74,
+      "baseline_mean": 4.907816868793134,
+      "ours_mean": 6.614697839217468,
+      "mean_delta_ours_minus_baseline": 1.7068809704243328,
+      "paired_t_p": 0.16613349649140177,
+      "wilcoxon_p": 0.5236286805414675
+    },
+    {
+      "metric": "ET_hd95",
+      "baseline": "nnUNetTrainerUMambaEnc_150epochs",
+      "ours": "nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs",
+      "n_pairs": 66,
+      "baseline_mean": 4.673134381188798,
+      "ours_mean": 6.3063721926607474,
+      "mean_delta_ours_minus_baseline": 1.6332378114719486,
+      "paired_t_p": 0.20643288586881808,
+      "wilcoxon_p": 0.09416831699140339
+    }
+  ]
+}

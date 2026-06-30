@@ -208,7 +208,14 @@ def auto_cases(gt_dir: Path, pred_specs: list[tuple[str, Path]], num_cases: int)
     return cases[:num_cases]
 
 
-def choose_slice(seg: np.ndarray, axis: int) -> int:
+def choose_slice(seg: np.ndarray, axis: int, prefer_et: bool = False) -> int:
+    if prefer_et:
+        et_mask = seg == 3
+        if et_mask.any():
+            axes_to_sum = tuple(i for i in range(3) if i != axis)
+            et_areas = et_mask.sum(axis=axes_to_sum)
+            return int(np.argmax(et_areas))
+
     mask = seg > 0
     if not mask.any():
         return int(seg.shape[axis] // 2)
@@ -290,6 +297,7 @@ def build_case_data(
     requested_slice: int | None,
     crop: bool,
     crop_margin: int,
+    prefer_et: bool = False,
 ) -> tuple[list[np.ndarray], int]:
     # Support loading multiple modalities
     if isinstance(modality, str):
@@ -314,7 +322,7 @@ def build_case_data(
             pred_name = pred_specs[i][0]
             raise ValueError(f"Shape mismatch for {case_id}: image {expected_shape} vs {pred_name} {pred.shape}")
 
-    slice_index = requested_slice if requested_slice is not None else choose_slice(gt, axis)
+    slice_index = requested_slice if requested_slice is not None else choose_slice(gt, axis, prefer_et=prefer_et)
 
     # Validate slice index
     if not (0 <= slice_index < expected_shape[axis]):
@@ -344,6 +352,8 @@ def main() -> None:
     parser.add_argument("--slice", type=int, default=None, help="Use a fixed slice index instead of max-tumor slice")
     parser.add_argument("--crop", action="store_true", help="Enable tumor-centered zoom-in crop")
     parser.add_argument("--crop-margin", type=int, default=24, help="Margin used only when --crop is enabled")
+    parser.add_argument("--prefer-et", action="store_true", help="Choose slice with maximum ET area instead of maximum tumor area")
+    parser.add_argument("--dual-output", action="store_true", help="Generate both full and cropped versions with _full and _zoom suffixes")
     parser.add_argument("--alpha", type=float, default=0.48)
     parser.add_argument("--no-contour", action="store_true")
     parser.add_argument("--dpi", type=int, default=300)
@@ -381,92 +391,112 @@ def main() -> None:
 
     column_titles = [*modality_titles, "GT", *[name for name, _ in pred_specs]]
 
-    nrows = len(cases)
-    ncols = len(column_titles)
-    fig_width = max(2.0 * ncols, 7)
-    fig_height = max(2.0 * nrows, 2.4)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(fig_width, fig_height), squeeze=False)
+    # Dual output mode: generate both full and cropped versions
+    output_modes = []
+    if args.dual_output:
+        output_modes = [("full", False), ("zoom", True)]
+    else:
+        output_modes = [("", args.crop)]
 
-    used_slices = {}
-    used_shapes = {}
-    for row_idx, case_id in enumerate(cases):
-        print(f"Processing case {row_idx + 1}/{len(cases)}: {case_id}")
-        try:
-            panels, slice_index = build_case_data(
-                case_id=case_id,
-                image_dir=image_dir,
-                gt_dir=gt_dir,
-                pred_specs=pred_specs,
-                modality=modalities,
-                axis=axis,
-                requested_slice=args.slice,
-                crop=args.crop,
-                crop_margin=args.crop_margin,
-            )
-            used_slices[case_id] = slice_index
-            used_shapes[case_id] = panels[0].shape
+    for mode_suffix, crop_mode in output_modes:
+        nrows = len(cases)
+        ncols = len(column_titles)
+        fig_width = max(2.0 * ncols, 7)
+        fig_height = max(2.0 * nrows, 2.4)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(fig_width, fig_height), squeeze=False)
 
-            num_modalities = len(modality_titles)
+        used_slices = {}
+        used_shapes = {}
+        for row_idx, case_id in enumerate(cases):
+            print(f"Processing case {row_idx + 1}/{len(cases)}: {case_id} ({'cropped' if crop_mode else 'full'})")
+            try:
+                panels, slice_index = build_case_data(
+                    case_id=case_id,
+                    image_dir=image_dir,
+                    gt_dir=gt_dir,
+                    pred_specs=pred_specs,
+                    modality=modalities,
+                    axis=axis,
+                    requested_slice=args.slice,
+                    crop=crop_mode,
+                    crop_margin=args.crop_margin,
+                    prefer_et=args.prefer_et,
+                )
+                used_slices[case_id] = slice_index
+                used_shapes[case_id] = panels[0].shape
 
-            for col_idx, ax in enumerate(axes[row_idx]):
-                ax.axis("off")
-                if row_idx == 0:
-                    ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
+                num_modalities = len(modality_titles)
 
-                # Add case ID label on the left
-                if col_idx == 0:
-                    ax.text(
-                        -0.06,
-                        0.5,
-                        case_id,
-                        transform=ax.transAxes,
-                        rotation=90,
-                        va="center",
-                        ha="right",
-                        fontsize=8,
-                    )
+                for col_idx, ax in enumerate(axes[row_idx]):
+                    ax.axis("off")
+                    if row_idx == 0:
+                        ax.set_title(column_titles[col_idx], fontsize=10, pad=6)
 
-                # Display image modality columns (no overlay)
-                if col_idx < num_modalities:
-                    ax.imshow(panels[col_idx], cmap="gray", vmin=0, vmax=1)
-                    lock_axes_to_image(ax, panels[col_idx].shape)
-                # Display GT and prediction columns (with overlay on first modality)
-                else:
-                    overlay_seg(
-                        ax,
-                        panels[0],  # Use first modality as background
-                        panels[col_idx],
-                        alpha=args.alpha,
-                        contour=not args.no_contour,
-                    )
-        except Exception as e:
-            print(f"Error processing case {case_id}: {e}")
-            raise
+                    # Add case ID label on the left
+                    if col_idx == 0:
+                        ax.text(
+                            -0.06,
+                            0.5,
+                            case_id,
+                            transform=ax.transAxes,
+                            rotation=90,
+                            va="center",
+                            ha="right",
+                            fontsize=8,
+                        )
 
-    legend_handles = [
-        Patch(facecolor=LABEL_COLORS[1], edgecolor=LABEL_COLORS[1], label="Edema / WT outer"),
-        Patch(facecolor=LABEL_COLORS[2], edgecolor=LABEL_COLORS[2], label="Tumor core"),
-        Patch(facecolor=LABEL_COLORS[3], edgecolor=LABEL_COLORS[3], label="Enhancing tumor"),
-    ]
-    fig.legend(
-        handles=legend_handles,
-        loc="lower center",
-        ncol=3,
-        frameon=False,
-        fontsize=8,
-        bbox_to_anchor=(0.5, 0.0),
-    )
-    fig.tight_layout(rect=(0, 0.04, 1, 1), w_pad=0.25, h_pad=0.4)
+                    # Display image modality columns (no overlay)
+                    if col_idx < num_modalities:
+                        ax.imshow(panels[col_idx], cmap="gray", vmin=0, vmax=1)
+                        lock_axes_to_image(ax, panels[col_idx].shape)
+                    # Display GT and prediction columns (with overlay on first modality)
+                    else:
+                        overlay_seg(
+                            ax,
+                            panels[0],  # Use first modality as background
+                            panels[col_idx],
+                            alpha=args.alpha,
+                            contour=not args.no_contour,
+                        )
+            except Exception as e:
+                print(f"Error processing case {case_id}: {e}")
+                raise
 
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
-    plt.close(fig)
+        legend_handles = [
+            Patch(facecolor=LABEL_COLORS[1], edgecolor=LABEL_COLORS[1], label="Edema / WT outer"),
+            Patch(facecolor=LABEL_COLORS[2], edgecolor=LABEL_COLORS[2], label="Tumor core"),
+            Patch(facecolor=LABEL_COLORS[3], edgecolor=LABEL_COLORS[3], label="Enhancing tumor"),
+        ]
+        fig.legend(
+            handles=legend_handles,
+            loc="lower center",
+            ncol=3,
+            frameon=False,
+            fontsize=8,
+            bbox_to_anchor=(0.5, 0.0),
+        )
+        fig.tight_layout(rect=(0, 0.04, 1, 1), w_pad=0.25, h_pad=0.4)
 
-    print(f"\nSaved figure: {out_path}")
-    print("Used slices:")
-    for case_id, slice_index in used_slices.items():
-        print(f"  {case_id}: {args.axis} slice {slice_index}, panel shape {used_shapes[case_id]}")
+        out_path = Path(args.out)
+        if mode_suffix:
+            stem = out_path.stem
+            if stem.endswith(".png") or stem.endswith(".pdf"):
+                stem = stem.rsplit(".", 1)[0]
+            out_path = out_path.parent / f"{stem}_{mode_suffix}{out_path.suffix}"
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
+
+        # Also save PDF version
+        pdf_path = out_path.with_suffix(".pdf")
+        fig.savefig(pdf_path, bbox_inches="tight")
+        plt.close(fig)
+
+        print(f"\nSaved figures: {out_path} and {pdf_path}")
+        if not args.dual_output or mode_suffix == "zoom":
+            print("Used slices:")
+            for case_id, slice_index in used_slices.items():
+                print(f"  {case_id}: {args.axis} slice {slice_index}, panel shape {used_shapes[case_id]}")
 
 
 if __name__ == "__main__":
