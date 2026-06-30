@@ -488,6 +488,7 @@ class UNetResDecoder_RTHD(nn.Module):
                  use_skip_fusion_gate: bool = False,
                  skip_gate_stages: List[int] = None,
                  skip_gate_reduction: int = 4,
+                 skip_gate_type: str = "semantic",
                  use_boundary_attention_head: bool = False,
                  use_frequency_refinement: bool = False,
                  frequency_refinement_stages: List[int] = None):
@@ -502,6 +503,7 @@ class UNetResDecoder_RTHD(nn.Module):
         self.use_skip_fusion_gate = use_skip_fusion_gate
         self.use_boundary_attention_head = use_boundary_attention_head
         self.use_frequency_refinement = use_frequency_refinement
+        self.skip_gate_type = skip_gate_type
 
         # 默认stage配置
         if skip_gate_stages is None:
@@ -539,14 +541,19 @@ class UNetResDecoder_RTHD(nn.Module):
 
         # 第二版增强模块打印信息
         if use_skip_fusion_gate:
-            print(f"✓ Skip Fusion Gate enabled for stages: {skip_gate_stages}")
+            print(f"✓ Skip Fusion Gate enabled for stages: {skip_gate_stages}, type: {skip_gate_type}")
         if use_boundary_attention_head:
             print(f"✓ Boundary Attention Head enabled")
         if use_frequency_refinement:
             print(f"✓ Frequency Refinement enabled for stages: {frequency_refinement_stages}")
 
         # 导入第二版增强模块
-        from .rthd_modules import SemanticSkipFusionGate3d, BoundaryAttentionHead3d, HighLowFrequencyRefinement3d
+        from .rthd_modules import (
+            AttentionSkipFusionGate3d,
+            BoundaryAttentionHead3d,
+            HighLowFrequencyRefinement3d,
+            SemanticSkipFusionGate3d,
+        )
 
         stages = []
         upsample_layers = []
@@ -637,10 +644,13 @@ class UNetResDecoder_RTHD(nn.Module):
 
             # 第二版增强：skip fusion gate
             if use_skip_fusion_gate and decoder_stage_idx in skip_gate_stages:
-                skip_gates.append(SemanticSkipFusionGate3d(
-                    dim=input_features_skip,
-                    reduction=skip_gate_reduction
-                ))
+                if skip_gate_type == "semantic":
+                    skip_gate_cls = SemanticSkipFusionGate3d
+                elif skip_gate_type == "attention":
+                    skip_gate_cls = AttentionSkipFusionGate3d
+                else:
+                    raise ValueError(f"Invalid skip_gate_type: {skip_gate_type}. Must be 'semantic' or 'attention'")
+                skip_gates.append(skip_gate_cls(dim=input_features_skip, reduction=skip_gate_reduction))
             else:
                 skip_gates.append(nn.Identity())
 
@@ -759,6 +769,7 @@ class UMambaEnc_RTHD(nn.Module):
                  use_skip_fusion_gate: bool = False,
                  skip_gate_stages: List[int] = None,
                  skip_gate_reduction: int = 4,
+                 skip_gate_type: str = "semantic",
                  use_boundary_attention_head: bool = False,
                  use_frequency_refinement: bool = False,
                  frequency_refinement_stages: List[int] = None,
@@ -836,6 +847,7 @@ class UMambaEnc_RTHD(nn.Module):
                 use_skip_fusion_gate=use_skip_fusion_gate,
                 skip_gate_stages=skip_gate_stages,
                 skip_gate_reduction=skip_gate_reduction,
+                skip_gate_type=skip_gate_type,
                 use_boundary_attention_head=use_boundary_attention_head,
                 use_frequency_refinement=use_frequency_refinement,
                 frequency_refinement_stages=frequency_refinement_stages,
@@ -867,6 +879,7 @@ def get_umamba_enc_rthd_3d_from_plans(
         use_skip_fusion_gate: bool = False,
         skip_gate_stages: List[int] = None,
         skip_gate_reduction: int = 4,
+        skip_gate_type: str = "semantic",
         use_boundary_attention_head: bool = False,
         use_frequency_refinement: bool = False,
         frequency_refinement_stages: List[int] = None
@@ -900,6 +913,7 @@ def get_umamba_enc_rthd_3d_from_plans(
         use_skip_fusion_gate: 是否启用语义引导skip融合门控
         skip_gate_stages: skip gate作用的stage列表（默认[0,1]）
         skip_gate_reduction: skip gate隐藏层降维比例（默认4）
+        skip_gate_type: skip gate类型，semantic为本文残差双向门控，attention为传统0-1注意力门控
         use_boundary_attention_head: 是否启用边界注意力头
         use_frequency_refinement: 是否启用高低频结构恢复
         frequency_refinement_stages: 频率恢复作用的stage列表（默认[0,1]）
@@ -947,6 +961,7 @@ def get_umamba_enc_rthd_3d_from_plans(
             'use_skip_fusion_gate': use_skip_fusion_gate,
             'skip_gate_stages': skip_gate_stages,
             'skip_gate_reduction': skip_gate_reduction,
+            'skip_gate_type': skip_gate_type,
             'use_boundary_attention_head': use_boundary_attention_head,
             'use_frequency_refinement': use_frequency_refinement,
             'frequency_refinement_stages': frequency_refinement_stages,

@@ -737,6 +737,36 @@ class SemanticSkipFusionGate3d(nn.Module):
         return refined_skip
 
 
+class AttentionSkipFusionGate3d(nn.Module):
+    """
+    Attention U-Net-style skip gate for ablation.
+
+    This module keeps the comparison intentionally simple: decoder context and
+    encoder skip features are projected to a hidden space, combined, mapped to a
+    single spatial attention mask in [0, 1], and then multiplied with the skip
+    features. Unlike SemanticSkipFusionGate3d, it is a one-way suppressive gate
+    without residual [-1, 1] calibration.
+    """
+    def __init__(self, dim: int, reduction: int = 4):
+        super().__init__()
+        hidden_dim = max(dim // reduction, 16)
+        self.skip_proj = nn.Conv3d(dim, hidden_dim, kernel_size=1, bias=False)
+        self.decoder_proj = nn.Conv3d(dim, hidden_dim, kernel_size=1, bias=False)
+        self.attn = nn.Sequential(
+            nn.InstanceNorm3d(hidden_dim, eps=1e-5, affine=True),
+            nn.GELU(),
+            nn.Conv3d(hidden_dim, 1, kernel_size=1, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, skip: torch.Tensor, decoder: torch.Tensor) -> torch.Tensor:
+        if decoder.shape[2:] != skip.shape[2:]:
+            decoder = F.interpolate(decoder, size=skip.shape[2:], mode='trilinear', align_corners=False)
+
+        gate = self.attn(self.skip_proj(skip) + self.decoder_proj(decoder))
+        return skip * gate
+
+
 class BoundaryAttentionHead3d(nn.Module):
     """
     边界感知注意力头（第二版增强）
