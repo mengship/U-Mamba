@@ -44,7 +44,7 @@ class nnUNetTrainerUMambaEncRTHD_FullDecoderETSM(nnUNetTrainer):
                 "view_mode": "tri",
                 "share_weights": True,
                 "scan_mode": "omni",
-                "use_local_window": False,
+                "use_local_window": True,  # 修复：启用局部窗口避免高分辨率显存爆炸
                 "window_size": 8,
                 "reconstruction_mode": "gated",
                 "cross_view_interaction": True,

@@ -79,7 +79,7 @@ python umamba/0607/compute_brats_hd95.py \
 | ---- | ------- | ---- |
 | 无解码ETSM | `nnUNetTrainerUMambaEncRTHD_EncoderOnly_150epochs` | 已有f0 |
 | 仅低分辨率解码ETSM | `nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_150epochs` | 已有f0 |
-| 全解码层ETSM | `nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs` | 已新增，待跑 |
+| 全解码层ETSM | `nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs` | f0筛查OOM，24GB显存不可行 |
 
 先跑f0筛查：
 
@@ -87,7 +87,17 @@ python umamba/0607/compute_brats_hd95.py \
 nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs
 ```
 
-如果显存和结果正常，再补f1-f4：
+f0筛查结果：
+
+- 运行命令：`nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs`
+- 报错位置：`UMambaEnc_RTHD.py`解码器阶段，`rthd_modules.py`中残差相加前后显存继续增长。
+- 显存情况：RTX3090 24GB上训练进程已占用约23.19GB，仅剩约502MB，继续分配512MB时触发`torch.cuda.OutOfMemoryError`。
+- 结论：全解码层ETSM在当前128×128×128 patch和24GB显存条件下不可训练，不建议继续补f1-f4。
+- 论文中可用表述：全解码层引入ETSM会在高分辨率解码阶段带来过高显存开销，验证了阶段感知解码仅在低分辨率阶段部署ETSM的必要性。
+
+若后续导师坚持测试全解码层ETSM，需要更高显存GPU、降低patch size或让Claude重写轻量版本。当前小论文主线不建议为该不可行对照继续投入训练资源。
+
+如果显存和结果正常，再补f1-f4（当前已判定不执行）：
 
 ```bash
 for FOLD in 1 2 3 4; do
@@ -95,7 +105,7 @@ for FOLD in 1 2 3 4; do
 done
 ```
 
-论文中使用：单独形成“解码ETSM部署位置消融表”，比较Dice、HD95、参数量、推理时间和峰值显存。重点说明若全解码层ETSM未带来更好Dice/HD95或显存更高，则支持阶段感知部署策略。
+论文中使用：不再将全解码层ETSM作为完整数值消融表项，可在阶段感知解码分析中补充“全解码层ETSM在24GB GPU上触发OOM，说明高分辨率解码阶段引入状态空间模块具有明显显存开销”，用于支持当前低分辨率阶段部署策略。
 
 ## 四、C3：跨视图交互门控消融
 
@@ -395,11 +405,12 @@ python umamba/0607/analyze_c_revisions.py \
 
 ## 二、处理C7：统计显著性检验
 
-- [ ] 确认五折HD95 JSON是否齐全。
+- [x] 确认五折HD95 JSON是否齐全。
   - 每个fold都需要U-Mamba和Ours各一个HD95 JSON。
   - 命名格式推荐：`{TRAINER}_fold{FOLD}_hd95.json`。
+  - 当前核查：新版`c7_case_level_metrics.csv`中HD95已覆盖f0-f4，五折均可用于配对统计。
 
-- [ ] 运行五折配对统计。
+- [x] 运行五折配对统计。
   ```bash
   python umamba/0607/analyze_c_revisions.py \
     --results-root /hy-tmp/U-Mamba/data/nnUNet_results/Dataset705_BraTS2020 \
@@ -412,18 +423,20 @@ python umamba/0607/analyze_c_revisions.py \
     --json /hy-tmp/c7_significance_summary.json
   ```
 
-- [ ] 下载/复制C7结果到`paper_revision_0629`目录。
+- [x] 下载/复制C7结果到`paper_revision_0629`目录。
   - `c7_case_level_metrics.csv`
   - `c7_significance_summary.json`
 
-- [ ] 根据p值决定论文表述。
+- [x] 根据p值决定论文表述。
   - 若HD95显著：写“配对检验显示HD95改善具有统计意义”。
   - 若不显著：写“整体趋势改善，但不同病例和不同折间仍存在波动”。
   - 不要在p值不支持时写“显著提升”。
+  - 已写入修订稿：五折369个配对病例的Mean Dice统计检验。Ours在227例优于U-Mamba、142例低于U-Mamba，Mean Dice平均差值为0.0028，中位数差值为0.0016；Wilcoxon p=0.00014，配对t检验p=0.2179。因此论文表述为“病例层面小幅正向偏移、均值差异未达显著水平”，不写显著均值提升。
+  - 已写入修订稿：Mean HD95平均降低0.5733，配对t检验p=0.1984，Wilcoxon p=0.1077。因此论文表述为“HD95整体下降趋势”，不写显著边界误差降低。
 
 ## 三、处理C8：均值与标准差核对
 
-- [ ] 使用C7输出或重新运行C8统计。
+- [x] 使用C7输出或重新运行C8统计。
   ```bash
   python umamba/0607/analyze_c_revisions.py \
     --results-root /hy-tmp/U-Mamba/data/nnUNet_results/Dataset705_BraTS2020 \
@@ -436,15 +449,23 @@ python umamba/0607/analyze_c_revisions.py \
     --json /hy-tmp/c8_mean_std_summary.json
   ```
 
-- [ ] 核对论文中五折表格的均值。
+- [x] 核对论文中五折表格的均值。
   - U-Mamba平均Dice：目前记录为85.27%。
   - Ours平均Dice：目前记录为85.53%。
   - U-Mamba平均HD95：目前记录为4.606。
   - Ours平均HD95：目前记录为4.077。
+  - 核对结果：表4-3均值与当前论文记录一致。
+  - 按表4-3各fold汇总值计算的标准差：
+    - U-Mamba Mean Dice：2.13个百分点。
+    - Ours Mean Dice：2.46个百分点。
+    - U-Mamba Mean HD95：0.556。
+    - Ours Mean HD95：1.055。
+  - 说明：`c7_significance_summary.json`中的`fold_mean_std`为逐病例指标聚合口径，和表4-3的区域/折汇总展示口径略有差异；论文正文优先使用表4-3口径补充标准差，避免主表与正文口径混用。
 
-- [ ] 决定表格是否改成`mean±std`。
+- [x] 决定表格是否改成`mean±std`。
   - 如果版面允许，主表推荐写`mean±std`。
   - 如果版面紧张，正文中补充标准差，表格保留均值。
+  - 当前决策：表4-3保留逐fold和平均值展示，不改成`mean±std`；在表后正文补充标准差说明，已写入修订稿。
 
 ## 四、处理C1：五折主线消融
 
@@ -472,12 +493,13 @@ python umamba/0607/analyze_c_revisions.py \
 
 注意：涉及代码训练器入口的实现和修复，后续默认生成Claude提示词，让Claude完成代码检查或重写。
 
-- [ ] C2：全解码层ETSM对照。
+- [x] C2：全解码层ETSM对照。
   - 先跑f0：
     ```bash
     nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs
     ```
   - 若显存不够或结果异常，暂不扩展五折，在论文中只保留阶段感知策略的理论解释。
+  - 已完成f0筛查：RTX3090 24GB上触发CUDA OOM，当前不扩展五折；该结果可作为阶段感知解码设计的资源开销依据。
 
 - [ ] C3：`w/o cross-view gating`对照。
   - 先跑f0：
@@ -521,9 +543,10 @@ python umamba/0607/analyze_c_revisions.py \
   - 候选：`BraTS20_Training_177.nii.gz`
   - 候选：`BraTS20_Training_246.nii.gz`
 
-- [ ] 生成局部放大图或边界对比图。
+- [x] 生成局部放大图或边界对比图。
   - 目的：解释HD95改善和f3小ET失败场景。
   - 代码任务优先交给Claude实现。
+  - 已完成：`brats_f3_failure_cases_full.png`和`brats_f3_failure_cases_zoom.png`已放入`umamba/paper_revision_0629/paper_assets/`，并写入修订稿图4-2和图4-3。
 
 ## 八、论文与回复文件同步
 
