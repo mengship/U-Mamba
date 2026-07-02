@@ -79,6 +79,7 @@ python umamba/0607/compute_brats_hd95.py \
 | ---- | ------- | ---- |
 | 无解码ETSM | `nnUNetTrainerUMambaEncRTHD_EncoderOnly_150epochs` | 已有f0 |
 | 仅低分辨率解码ETSM | `nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_150epochs` | 已有f0 |
+| 部分解码层ETSM | `nnUNetTrainerUMambaEncRTHD_PartialDecoderETSM_150epochs` | f0已完成，Mean Dice=88.73% |
 | 全解码层ETSM | `nnUNetTrainerUMambaEncRTHD_FullDecoderETSM_150epochs` | f0筛查OOM，24GB显存不可行 |
 
 先跑f0筛查：
@@ -107,6 +108,18 @@ done
 
 论文中使用：不再将全解码层ETSM作为完整数值消融表项，可在阶段感知解码分析中补充“全解码层ETSM在24GB GPU上触发OOM，说明高分辨率解码阶段引入状态空间模块具有明显显存开销”，用于支持当前低分辨率阶段部署策略。
 
+补充可训练对照：
+
+- `nnUNetTrainerUMambaEncRTHD_PartialDecoderETSM_150epochs`为较温和的部分解码层ETSM版本，在解码器stage 0/1/2使用ETSM，而当前`StageAwareDecoder`仅在stage 0/1使用ETSM。
+- f0训练结果：`Mean Validation Dice=0.8872545937003561`，即约88.73%。
+- f0 HD95结果：WT=5.028944，TC=4.270064，ET=3.447150，Mean=4.248719；ET统计中finite=71、nan=1、inf=2，与U-Mamba和最终方法的ET计数口径一致。
+- 与已有f0结果对比：
+  - `+ETSM+Stage`：88.47%。
+  - `PartialDecoderETSM`：88.73%，Mean HD95=4.249。
+  - `+ETSM+Stage+Skip`（最终方法）：88.86%，Mean HD95=3.444。
+- 当前结论：增加一个中等分辨率解码ETSM阶段后，Mean Dice较`+ETSM+Stage`有所提升，Mean HD95也由4.308下降至4.249，但仍明显低于最终方法的HD95表现；说明扩大解码ETSM部署范围存在一定收益，但SkipCalibration对边界误差改善仍有更关键的补充作用。
+- 待补：若要写入论文表格，需要进一步收集该trainer的WT/TC/ET Dice、峰值显存和推理时间，避免只用Mean Dice和HD95下结论。
+
 ## 四、C3：跨视图交互门控消融
 
 审稿意见：ETSM内部`cross-view gating`缺少独立量化验证。
@@ -125,6 +138,15 @@ done
 nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_NoCrossViewGate_150epochs
 ```
 
+f0筛查结果：
+
+- 训练已完成，`Mean Validation Dice=0.8889759482835508`，即约88.90%。
+- 与最终方法f0的88.86%相比，NoCrossViewGate的Mean Dice略高，说明不能简单声称`cross-view gating`带来Dice提升。
+- f0 HD95结果：WT=3.925076，TC=2.787099，ET=1.662399，Mean=2.791524；ET统计中finite=71、nan=1、inf=2，与最终方法计数口径一致。
+- 与最终方法f0的Mean HD95=3.444相比，NoCrossViewGate的HD95更低，说明在f0上关闭跨视图交互门控反而取得更好的边界距离表现。
+- 当前判断：`cross-view gating`在当前实现中不能作为稳定增益模块来强调。至少在f0上，它可能引入额外扰动或过度调节，导致边界误差变大。论文中应谨慎处理该模块：若保留当前最终方法，需要弱化“跨视图门控贡献”的表述；若将NoCrossViewGate作为新候选方法，则需要进一步补五折验证。
+- 待补：需要计算该trainer的WT/TC/ET Dice、峰值显存和推理时间；若准备将其替换为最终方法，还需补f1-f4和显著性统计。
+
 若f0差异明显或导师要求补足统计，再跑f1-f4：
 
 ```bash
@@ -133,7 +155,7 @@ for FOLD in 1 2 3 4; do
 done
 ```
 
-论文中使用：作为ETSM内部消融，比较`w/o cross-view gating`和本文方法。若差异很小，需要如实说明跨视图门控贡献有限，主要收益来自三视图降维与SkipCalibration。
+论文中使用：作为ETSM内部消融，比较`w/o cross-view gating`和本文方法。当前f0结果显示关闭cross-view gating后Dice和HD95均更优，因此不应再将cross-view gating表述为明确贡献点。若后续不扩展五折，可在论文中将其作为“交互门控在当前实现下未带来稳定收益”的负向消融结果；若要调整最终方法，则需补NoCrossViewGate五折。
 
 ## 五、C4：传统Attention U-Net门控对照
 
@@ -500,6 +522,7 @@ python umamba/0607/analyze_c_revisions.py \
     ```
   - 若显存不够或结果异常，暂不扩展五折，在论文中只保留阶段感知策略的理论解释。
   - 已完成f0筛查：RTX3090 24GB上触发CUDA OOM，当前不扩展五折；该结果可作为阶段感知解码设计的资源开销依据。
+  - 补充结果：`PartialDecoderETSM_150epochs` f0可训练，Mean Validation Dice=0.8872545937003561，Mean HD95=4.248719；待补区域Dice/复杂度后决定是否写入论文消融表。
 
 - [ ] C3：`w/o cross-view gating`对照。
   - 先跑f0：
@@ -507,6 +530,7 @@ python umamba/0607/analyze_c_revisions.py \
     nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_NoCrossViewGate_150epochs
     ```
   - 若差异明显，再考虑扩展五折。
+  - 已完成f0训练：Mean Validation Dice=0.8889759482835508，Mean HD95=2.791524，均优于当前最终方法f0。需要决定是否扩展f1-f4，或仅作为负向消融说明cross-view gating贡献有限。
 
 - [ ] C4：Attention U-Net 0-1门控对照。
   - 先让Claude检查/重写该训练器逻辑。

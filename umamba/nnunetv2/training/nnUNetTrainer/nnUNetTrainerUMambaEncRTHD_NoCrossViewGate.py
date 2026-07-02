@@ -31,7 +31,7 @@ class nnUNetTrainerUMambaEncRTHD_NoCrossViewGate(nnUNetTrainer):
             "cross_view_interaction": False,
         }
         encoder_config = {**common_config, "use_local_window": True}
-        decoder_config = {**common_config, "use_local_window": False}
+        decoder_config = {**common_config, "use_local_window": True}  # 修复：启用局部窗口保证显存稳定
 
         return get_umamba_enc_rthd_3d_from_plans(
             plans_manager,
