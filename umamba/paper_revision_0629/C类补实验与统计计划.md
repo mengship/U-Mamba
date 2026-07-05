@@ -491,25 +491,34 @@ python umamba/0607/analyze_c_revisions.py \
 
 ## 四、处理C1：五折主线消融
 
-- [ ] 补跑EncoderOnly的f1-f4。
+- [x] 补跑EncoderOnly的f1-f4。
   ```bash
   for FOLD in 1 2 3 4; do
     nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainerUMambaEncRTHD_EncoderOnly_150epochs
   done
   ```
 
-- [ ] 补跑StageAwareDecoder的f1-f4。
+- [x] 补跑StageAwareDecoder的f1-f4。
   ```bash
   for FOLD in 1 2 3 4; do
     nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_150epochs
   done
   ```
 
-- [ ] 收集C1五折Dice和HD95。
+- [x] 收集C1五折Dice和HD95。
 
-- [ ] 更新论文消融表。
-  - 若C1来不及补完，则保留f0消融表，但表题必须明确“第0折消融实验”。
-  - 正文需承认“完整五折消融仍需进一步验证”。
+- [x] 更新论文消融表。
+  - 已将修订稿表4-5由“第0折消融实验结果”更新为“五折主线消融实验结果”。
+  - 五折主线消融结果如下：
+
+  | 方法 | Mean Dice/% | Mean HD95 |
+  | ---- | ----------: | --------: |
+  | U-Mamba | 85.27±2.13 | 4.606±0.556 |
+  | +ETSM | 85.21±2.02 | 4.263±0.992 |
+  | +ETSM+Stage | 85.23±2.20 | 4.603±1.198 |
+  | +ETSM+Stage+Skip | 85.53±2.46 | 4.077±1.055 |
+
+  - 论文分析已改为五折口径：单独引入ETSM和阶段感知解码时增益并不单调，加入SkipCalibration后取得最高Mean Dice和最低Mean HD95。
 
 ## 五、处理C2-C4：新增消融对照
 
