@@ -1,6 +1,6 @@
 基于高效三视图状态空间建模的脑肿瘤MRI分割网络
 
-摘要：针对三维脑肿瘤MRI分割中跨切面上下文建模不足、体数据空间建模开销较大以及解码阶段结构细节恢复不充分等问题，本文提出一种融合高效三视图状态空间建模与阶段感知解码的分割网络。该方法以U-Mamba为基础框架，将三维特征投影到轴状位、冠状位和矢状位三个二维视图，并通过参数共享的SS2D模块进行多方向上下文建模，从而降低三维状态空间扫描的主要序列规模。针对解码阶段不同分辨率特征的恢复需求，设计阶段感知解码策略，在低分辨率层补偿全局结构信息，在高分辨率层保留卷积细化能力；同时构建语义引导跳跃连接特征标定模块，利用解码端高级语义对编码端浅层细节特征进行自适应筛选。在BraTS2020脑肿瘤分割数据集上的五折实验结果表明，本文方法平均Dice由U-Mamba的85.27%增至85.53%，平均HD95由4.606 mm降至4.077 mm；参数量由42.75M降至37.10M，峰值显存占用由4.22 GiB降至2.46 GiB。与U-Mamba相比，该方法在五折汇总中保持了接近的区域分割精度，并呈现更低的HD95、参数量和峰值显存占用。
+摘要：针对三维脑肿瘤MRI分割中跨切面上下文建模不足、体数据空间建模开销较大以及解码阶段结构细节恢复不充分等问题，本文提出一种融合高效三视图状态空间建模与阶段感知解码的分割网络。该方法以U-Mamba为基础框架，将三维特征投影到轴状位、冠状位和矢状位三个二维视图，并通过参数共享的SS2D模块进行多方向上下文建模，从而降低三维状态空间扫描的主要序列规模。针对解码阶段不同分辨率特征的恢复需求，设计阶段感知解码策略，在低分辨率层补偿全局结构信息，在高分辨率层保留卷积细化能力；同时构建语义引导跳跃连接特征标定模块，利用解码端高级语义对编码端浅层细节特征进行自适应筛选。在BraTS2020脑肿瘤分割数据集上的五折实验结果表明，本文方法平均Dice由U-Mamba的85.27%增至85.53%，平均HD95由4.606 mm降至4.077 mm；参数量由42.75M降至37.10M，峰值显存占用由4.22 GiB降至2.46 GiB。结果表明，该方法在保持区域分割精度的同时，相较U-Mamba降低了模型复杂度，并对肿瘤边界定位质量有所改善。
 
 关键词：脑肿瘤分割；磁共振成像；状态空间模型；高效三视图状态空间建模；阶段感知解码；跳跃连接标定
 
@@ -8,7 +8,7 @@
 
 **Brain tumor MRI segmentation network based on efficient tri-view state-space modeling**
 
-**Abstract:** To address insufficient cross-slice contextual modeling, high computational cost of volumetric spatial representation, and limited structural detail recovery in three-dimensional brain tumor MRI segmentation, this paper proposes a segmentation network integrating Efficient Tri-view State-space Modeling and stage-aware decoding. Built upon U-Mamba, the proposed method projects three-dimensional features into axial, coronal, and sagittal two-dimensional views and uses a shared SS2D module for multi-directional contextual modeling, thereby reducing the principal sequence size of volumetric state-space scanning. In the decoder, a stage-aware recovery strategy is designed according to feature resolutions, where low-resolution stages compensate global structural information and high-resolution stages retain convolutional refinement. In addition, a semantic-guided skip feature calibration module is developed to adaptively select shallow encoder features using high-level decoder semantics. Five-fold experiments on the BraTS2020 brain tumor segmentation dataset showed that, compared with U-Mamba, the proposed method increased the average Dice score from 85.27% to 85.53%, decreased the average HD95 from 4.606 mm to 4.077 mm, reduced the number of parameters from 42.75M to 37.10M, and reduced peak memory consumption from 4.22 GiB to 2.46 GiB. Compared with U-Mamba, the method maintained similar regional segmentation accuracy in the five-fold summary while yielding lower HD95, parameter count, and peak memory consumption.
+**Abstract:** To address insufficient cross-slice contextual modeling, high computational cost of volumetric spatial representation, and limited structural detail recovery in three-dimensional brain tumor MRI segmentation, this paper proposes a segmentation network integrating Efficient Tri-view State-space Modeling and stage-aware decoding. Built upon U-Mamba, the proposed method projects three-dimensional features into axial, coronal, and sagittal two-dimensional views and uses a shared SS2D module for multi-directional contextual modeling, thereby reducing the principal sequence size of volumetric state-space scanning. In the decoder, a stage-aware recovery strategy is designed according to feature resolutions, where low-resolution stages compensate global structural information and high-resolution stages retain convolutional refinement. In addition, a semantic-guided skip feature calibration module is developed to adaptively select shallow encoder features using high-level decoder semantics. Five-fold experiments on the BraTS2020 brain tumor segmentation dataset showed that, compared with U-Mamba, the proposed method increased the average Dice score from 85.27% to 85.53%, decreased the average HD95 from 4.606 mm to 4.077 mm, reduced the number of parameters from 42.75M to 37.10M, and reduced peak memory consumption from 4.22 GiB to 2.46 GiB. The results indicate that the method reduces model complexity relative to U-Mamba and provides improved tumor boundary localization while maintaining regional segmentation accuracy.
 
 **Key words:** brain tumor segmentation; magnetic resonance imaging; state space model; efficient tri-view state-space modeling; stage-aware decoding; skip feature calibration
 
@@ -48,11 +48,9 @@ y_t=Ch_t+Dx_t
 
 在多平面CNN方面，Prasoon等[18]采用三平面卷积网络学习膝关节软骨的正交切面特征；QuickNAT在轴状位、冠状位和矢状位上建立二维分割网络，并聚合多视图预测以获得三维神经解剖分割结果[19]；Multiplanner U-Net则将多平面策略用于脑肿瘤MRI分割[15]。此类方法能够利用正交切面的互补信息，但视图分支多采用独立参数，视图间交互主要发生在预测层，存在参数重复和融合偏晚的问题。
 
-近期，李孟灵等[26]提出三平面滑动窗口状态空间模块，在nnU-Netv2编码器底部三层沿三个正交方向构造窗口序列，并通过可学习权重融合三视图输出。该方法侧重编码端局部窗口的多方向状态演化；本文ETSM则通过三维特征投影构造三个正交二维视图，共享SS2D模块参数，并结合低分辨率解码补偿和语义引导跳跃特征标定进行结构恢复。
+为将长程依赖建模前移到特征层，CNN-Transformer融合方法将卷积局部特征与token全局交互相结合。TransFuse采用CNN与Transformer并行分支，并通过BiFusion模块融合多尺度特征[20]；CoTr在三维CNN编码表示上引入可变形Transformer，以连接局部卷积特征和长程上下文[21]；nnFormer则交错使用局部与全局自注意力进行体积分割[22]。这类方法增强了特征层全局交互，但并行分支或三维自注意力在高分辨率体数据上仍会增加计算和显存开销。
 
-为将长程依赖建模前移到特征层，CNN-Transformer融合方法将卷积局部特征与token全局交互相结合。TransFuse采用CNN与Transformer并行分支，并通过BiFusion模块融合多尺度特征[20]；CoTr在三维CNN编码表示上引入可变形Transformer，以连接局部卷积特征和长程上下文[21]；nnFormer则交错使用局部与全局自注意力进行体积分割[22]。国内相关研究中，侯蓓蓓等[27]将深度可分离卷积、ShuffleNet V2与Transformer结合，以轻量级编码器兼顾局部特征提取和长程依赖建模。这类方法增强了特征层全局交互，但并行分支或三维自注意力在高分辨率体数据上仍会增加计算和显存开销。
-
-医学Mamba方法为长程依赖建模提供了近似线性复杂度的新路径。U-Mamba在U形卷积网络中引入状态空间模块[9]，SegMamba进一步面向三维医学影像建模长程序列关系[10]。VM-UNet、Swin-UMamba和LightM-UNet分别从纯视觉Mamba U形结构、ImageNet预训练和轻量化模块设计等方面扩展二维医学分割[23-25]。侯向宁等[28]则将并行Mamba轻量化模块与注意力桥接结构引入3D U-Net，用于多模态脑肿瘤MRI分割中的全局信息提取与参数开销控制。二维Mamba的主要建模规模与HW相关，但逐切片处理弱化了显式跨切片关系；三维Mamba能够直接处理体特征，但序列或空间规模与DHW相关。
+医学Mamba方法为长程依赖建模提供了近似线性复杂度的新路径。U-Mamba在U形卷积网络中引入状态空间模块[9]，SegMamba进一步面向三维医学影像建模长程序列关系[10]。VM-UNet、Swin-UMamba和LightM-UNet分别从纯视觉Mamba U形结构、ImageNet预训练和轻量化模块设计等方面扩展二维医学分割[23-25]。二维Mamba的主要建模规模与HW相关，但逐切片处理弱化了显式跨切片关系；三维Mamba能够直接处理体特征，但序列或空间规模与DHW相关。
 
 表1总结了相关方法与本文ETSM的主要差异。本文不为三个视图分别构建独立网络，而是将三维特征投影到三个正交二维视图，使用参数共享的SS2D模块进行扫描，并在三维重建前完成轻量视图间调节。其主要序列规模由直接三维建模的DHW转换为HW+DW+DH，参数共享则避免了多视图独立分支带来的扫描模块参数线性增加。
 
@@ -63,10 +61,9 @@ Table 1 Comparison of multi-view and long-range modeling methods for medical ima
 | 方法类别 | 代表方法 | 输入与建模方式 | 融合位置 | 视图参数共享 | 主要序列/空间规模 | 主要局限 |
 | -------- | -------- | ---------------- | -------- | ------------ | ------------------ | -------- |
 | 多平面CNN | 三平面CNN、QuickNAT、Multiplanner U-Net[15,18-19] | 多个正交二维切面分支 | 预测层或级联后融合 | 通常否 | 单视图与HW、DW或DH相关 | 分支参数重复，跨视图交互偏晚 |
-| 三平面医学Mamba | TP-WSSM[26] | 三正交视图滑动窗口序列+VSSBlock | 编码器底部三层加权融合 | 统一VSSBlock处理三视图序列 | 与三视图局部窗口序列相关 | 建模范围主要集中于编码器底部三层 |
-| CNN-Transformer融合 | TransFuse、CoTr、nnFormer、轻量级Transformer脑肿瘤分割[20-22,27] | 并行二维特征或三维token | 编码/解码特征层 | 不涉及正交视图共享 | 与HW或DHW token数相关 | 自注意力或并行分支开销较高 |
+| CNN-Transformer融合 | TransFuse、CoTr、nnFormer[20-22] | 并行二维特征或三维token | 编码/解码特征层 | 不涉及正交视图共享 | 与HW或DHW token数相关 | 自注意力或并行分支开销较高 |
 | 二维医学Mamba | VM-UNet、Swin-UMamba、LightM-UNet[23-25] | 二维图像/切片状态空间扫描 | U形编码解码特征层 | 无显式三视图共享 | 与HW相关 | 对三维跨切片关系的显式建模有限 |
-| 三维医学Mamba | U-Mamba、SegMamba、轻量级Mamba脑肿瘤分割等[9-10,16-17,28] | 三维体特征序列建模 | 编码器或瓶颈特征层 | 无显式正交视图共享 | 与DHW相关 | 体数据序列长，多方向结构未显式解耦 |
+| 三维医学Mamba | U-Mamba、SegMamba等[9-10,16-17] | 三维体特征序列建模 | 编码器或瓶颈特征层 | 无显式正交视图共享 | 与DHW相关 | 体数据序列长，多方向结构未显式解耦 |
 | 本文ETSM | 轴状位/冠状位/矢状位投影+SS2D | 三个正交二维特征视图 | 二维扫描后、三维重建前 | 是 | HW+DW+DH | 平均池化投影可能削弱极小病灶响应 |
 
 **1.4**　三维医学图像分割中的解码恢复机制
@@ -225,7 +222,7 @@ Dice=\frac{2\left|P\cap G\right|}{\left|P\right|+\left|G\right|}
 
 其中，P表示模型预测区域，G表示真实标注区域。Dice值越高，表示分割结果与真实标注越接近。
 
-HD95用于衡量预测边界与真实边界之间的距离误差，相比普通Hausdorff距离能够减少少量异常点对评价结果的影响。本文依据NIfTI文件记录的体素间距计算表面距离，HD95单位为mm，数值越低表示边界定位越准确。对于某一区域，真实标注和预测均为空时将该项记为NaN；仅一侧为空时记为Inf。由于非有限距离无法直接纳入算术平均且人为设定上界会引入额外偏差，本文继续采用有限病例HD95作为主口径，同时独立报告双侧为空、仅真实标注为空和仅预测为空的病例数。表2至表4和表6采用“先在每折内对WT、TC和ET分别求均值，再对区域与五折结果进行汇总”的口径，其中HD95仅纳入有限病例；病例级配对检验则先对每个病例中可用的WT、TC和ET求均值，再在369个配对病例上统计。因此，表格汇总与病例级检验的聚合顺序不同，其Dice和HD95均值用于不同目的，不直接相互替代。
+HD95用于衡量预测边界与真实边界之间的距离误差，相比普通Hausdorff距离能够减少少量异常点对评价结果的影响。本文依据NIfTI文件记录的体素间距计算表面距离，HD95单位为mm，数值越低表示边界定位越准确。对于某一区域，真实标注和预测均为空时将该项记为NaN；仅一侧为空时记为Inf。由于非有限距离无法直接纳入算术平均且人为设定上界会引入额外偏差，本文继续采用有限病例HD95作为主口径，同时独立报告双侧为空、仅真实标注为空和仅预测为空的病例数。表3、表4和表6采用“先在每折内对各区域有限病例求均值，再对WT、TC和ET区域及五折结果进行汇总”的口径；病例级配对检验则先对每个病例中可用的WT、TC和ET区域求均值，再在369个配对病例上统计。因此，两种分析的聚合顺序不同，其HD95均值用于不同目的，不直接相互替代。
 
 **3.4**　对比实验
 
@@ -242,7 +239,7 @@ Table 2 Comparison of Dice coefficients among different methods
 | U-Mamba   | nnU-Net框架复现 | 91.28     | 87.31     | 77.22     | 85.27     |
 | 本文方法  | nnU-Net框架复现 | **91.61** | **87.47** | 77.51     | **85.53** |
 
-从表2可以看出，本文方法在U-Mamba基线模型的基础上，WT、TC和ET三个区域的Dice指标均有所提高。其中，平均Dice由85.27%增至85.53%，提高0.26个百分点；相较SegMamba，平均Dice高1.25个百分点。由于U-Mamba和nnU-Net等强基线在BraTS2020数据集上已经取得较高区域重叠性能，因此Dice指标继续提高的空间相对有限。本文方法的平均Dice数值略高于nnU-Net、U-Mamba和SegMamba，说明完整配置在本组五折汇总中保持了有竞争力的区域重叠精度；各结构模块的具体作用结合表6进一步分析。
+从表2可以看出，本文方法在U-Mamba基线模型的基础上，WT、TC和ET三个区域的Dice指标均有所提高。其中，平均Dice由85.27%增至85.53%，提高0.26个百分点；相较SegMamba，平均Dice高1.25个百分点。由于U-Mamba和nnU-Net等强基线在BraTS2020数据集上已经取得较高区域重叠性能，因此Dice指标继续提高的空间相对有限。本文方法在平均Dice上略高于nnU-Net、U-Mamba和SegMamba，表明高效三视图状态空间建模、阶段感知解码和跳跃连接特征标定对区域重叠精度具有一定补充作用。
 
 表3　不同方法的HD95对比
 
@@ -276,7 +273,7 @@ Table 3 (continued) Empty-mask statistics of HD95 for different methods
 
 注：HD95均值仅由有限病例计算。“仅真实标注为空”表示模型产生了假阳性预测；“仅预测为空”表示模型完全漏检该区域。每种方法在每个区域的四类计数之和均为369例。
 
-由表3可见，在有限病例HD95统计口径下，本文方法的平均HD95为4.077 mm，较U-Mamba的4.606 mm下降约11.49%，较SegMamba的4.777 mm也有所降低。与nnU-Net相比，本文方法在WT区域取得更低的HD95，而TC、ET及平均HD95略高，表明两种方法的总体边界定位性能接近，但在不同肿瘤区域上的表现存在差异。与Dice主要衡量区域重叠程度不同，HD95更加关注预测边界与真实边界之间的距离误差，对边界漏分、远端误分和轮廓不连续现象较为敏感。结合表3（续）的空掩膜统计，本文方法相较U-Mamba和SegMamba的五折汇总平均HD95更低，但对ET区域的假阳性控制和小病灶稳定性仍有进一步提升空间。
+由表3可见，在有限病例HD95统计口径下，本文方法的平均HD95为4.077 mm，较U-Mamba的4.606 mm下降约11.49%，较SegMamba的4.777 mm也有所降低。与nnU-Net相比，本文方法在WT区域取得更低的HD95，而TC、ET及平均HD95略高，表明两种方法的总体边界定位性能接近，但在不同肿瘤区域上的表现存在差异。与Dice主要衡量区域重叠程度不同，HD95更加关注预测边界与真实边界之间的距离误差，对边界漏分、远端误分和轮廓不连续现象较为敏感。结合表3（续）的空掩膜统计，本文方法相较U-Mamba和SegMamba在边界定位方面取得了一定改善，但对ET区域的假阳性控制和小病灶稳定性仍有进一步提升空间。
 
 **3.5**　五折交叉验证结果分析
 
@@ -301,9 +298,9 @@ Table 4 Comparison of five-fold average Dice and average HD95
 | 平均 | U-Mamba  | 85.27       | 4.606     |
 | 平均 | 本文方法 | **85.53**  | **4.077** |
 
-从表4可以看出，本文方法在f0、f1和f2上获得更高的平均Dice，且HD95下降；在f4上，本文方法的Dice与基线基本持平，但HD95仍有所改善；在f3上，本文方法的平均Dice由83.18%下降至82.58%，平均HD95由4.873 mm升高至5.951 mm，说明模型在部分数据划分上仍存在一定波动。按表4中各折汇总值计算，U-Mamba和本文方法的平均Dice标准差分别为2.13和2.46个百分点，平均HD95标准差分别为0.556 mm和1.055 mm，说明本文方法在总体均值改善的同时，折间波动略高于基线。为进一步分析f3折退化来源，本文对该折74个验证病例进行了逐病例统计。结果显示，本文方法在42例病例上的平均Dice高于U-Mamba，在32例病例上低于U-Mamba，且逐病例平均Dice差值的中位数为0.0009，提示f3折并非整体性普遍退化，而是受到少数困难病例的影响。
+从表4可以看出，本文方法在f0、f1和f2上获得更高的平均Dice，且HD95下降；在f4上，本文方法的Dice与基线基本持平，但HD95仍有所改善；在f3上，本文方法的平均Dice由83.18%下降至82.58%，平均HD95由4.873升高至5.951，说明模型在部分数据划分上仍存在一定波动。按表4中各折汇总值计算，U-Mamba和本文方法的平均Dice标准差分别为2.13和2.46个百分点，平均HD95标准差分别为0.556和1.055，说明本文方法在总体均值改善的同时，折间波动略高于基线。为进一步分析f3折退化来源，本文对该折74个验证病例进行了逐病例统计。结果显示，本文方法在42例病例上的平均Dice高于U-Mamba，在32例病例上低于U-Mamba，且逐病例平均Dice差值的中位数为0.0009，提示f3折并非整体性普遍退化，而是受到少数困难病例的影响。
 
-进一步基于五折验证集369个配对病例对平均Dice和平均HD95进行统计检验。结果显示，本文方法在227例病例上的平均Dice高于U-Mamba，在142例病例上低于U-Mamba，逐病例平均Dice差值为0.0028，中位数差值为0.0016。Wilcoxon符号秩检验结果为p=0.00014，提示病例层面的Dice分布存在小幅正向偏移；但配对t检验结果为p=0.2179，表明均值差异未达到显著水平。对于平均HD95，本文方法较U-Mamba平均降低0.5733 mm，配对t检验p=0.1984，Wilcoxon检验p=0.1077，表现为整体下降趋势，但未达到0.05显著性水平。病例级配对统计采用先对单个病例的WT、TC和ET求均值的方式，因此其Dice均值与表4按区域和折汇总的数值略有差异；同理，病例级HD95平均降幅0.5733 mm与表4汇总所得的0.529 mm不同。具体口径见第3.3节。因此，本文将结果表述为Dice小幅改善、HD95整体下降，而不作显著均值提升或显著边界误差降低的强结论。
+进一步基于五折验证集369个配对病例对平均Dice和平均HD95进行统计检验。结果显示，本文方法在227例病例上的平均Dice高于U-Mamba，在142例病例上低于U-Mamba，逐病例平均Dice差值为0.0028，中位数差值为0.0016。Wilcoxon符号秩检验结果为p=0.00014，提示病例层面的Dice分布存在小幅正向偏移；但配对t检验结果为p=0.2179，说明在少数困难病例和异常样本影响下，均值差异未达到显著水平。对于平均HD95，本文方法较U-Mamba平均降低0.5733 mm，配对t检验p=0.1984，Wilcoxon检验p=0.1077，表现为整体下降趋势，但未达到0.05显著性水平。该病例级平均降幅与表4按区域和折汇总所得的0.529 mm差值不同，原因是二者聚合顺序不同，具体口径见第3.3节。因此，本文将结果表述为Dice小幅改善、HD95整体下降，而不作显著均值提升或显著边界误差降低的强结论。
 
 为进一步定位f3折退化来源，本文按真实ET体素数对验证病例进行分组，并统计本文方法相对U-Mamba的指标差值，结果如表5所示。
 
@@ -311,7 +308,7 @@ Table 4 Comparison of five-fold average Dice and average HD95
 
 Table 5 Performance difference analysis of fold f3 grouped by ET volume
 
-| ET体积分组        | 病例数 | 平均Dice差值 | 平均HD95差值/mm | ET Dice差值 | ET HD95差值/mm |
+| ET体积分组        | 病例数 | 平均Dice差值 | 平均HD95差值 | ET Dice差值 | ET HD95差值 |
 | ----------------- | ------ | ------------- | ------------- | ----------- | ----------- |
 | ET=0              | 6      | +0.0018       | +1.1456       | 0.0000      | -           |
 | 0<ET<1000         | 5      | -0.1276       | +16.2781      | -0.1333     | +21.2189    |
@@ -320,9 +317,9 @@ Table 5 Performance difference analysis of fold f3 grouped by ET volume
 
 注：差值均表示“本文方法-U-Mamba”；Dice差值越大表示重叠精度越高，HD95差值越小表示边界距离误差越低。
 
-由表5可见，f3折性能下降主要集中在0<ET<1000的小体积增强肿瘤病例中。该组仅包含5例，但平均Dice下降0.1276，平均HD95升高16.2781 mm，ET Dice下降0.1333，ET HD95升高21.2189 mm，说明极小体积ET区域的漏检或弱响应会对该折平均结果产生较大影响。相比之下，当ET体积大于等于5000个体素时，本文方法的平均Dice提高0.0027，平均HD95下降0.6266 mm，说明本文方法在较大病灶上并未出现同样的退化趋势。以BraTS20_Training_087为例，该病例真实ET体积仅为406个体素，本文方法对ET区域的预测体素数仅为2，导致该病例平均Dice由U-Mamba的0.5072下降至0，逐病例平均HD95由9.24 mm升高至94.95 mm。该异常病例对f3折平均性能产生了较大影响，也说明当前固定阶段的三视图建模和跳跃特征标定策略在极小病灶或弱响应区域上仍存在不稳定性。
+由表5可见，f3折性能下降主要集中在0<ET<1000的小体积增强肿瘤病例中。该组仅包含5例，但平均Dice下降0.1276，平均HD95升高16.2781，ET Dice下降0.1333，ET HD95升高21.2189，说明极小体积ET区域的漏检或弱响应会对该折平均结果产生较大影响。相比之下，当ET体积大于等于5000个体素时，本文方法的平均Dice提高0.0027，平均HD95下降0.6266，说明本文方法在较大病灶上并未出现同样的退化趋势。以BraTS20_Training_087为例，该病例真实ET体积仅为406个体素，本文方法对ET区域的预测体素数仅为2，导致该病例平均Dice由U-Mamba的0.5072下降至0，逐病例平均HD95由9.24升高至94.95。该异常病例对f3折平均性能产生了较大影响，也说明当前固定阶段的三视图建模和跳跃特征标定策略在极小病灶或弱响应区域上仍存在不稳定性。
 
-整体来看，虽然个别折存在退化，本文方法在五折平均Dice上略高于U-Mamba基线，平均HD95呈整体下降趋势。该汇总结果与三视图空间建模和跳跃连接特征标定改善结构恢复的设计目标一致，但病例级HD95差异未达到0.05显著性水平，且其收益仍受病例分布和小体积病灶影响，因而不将其解释为独立模块的显著边界增益。同时，f3折逐病例统计也提示当前方法对极小体积增强肿瘤、低对比度病灶和复杂病例分布的适应性仍有进一步提升空间。后续可结合病灶尺度感知、视图权重自适应或病例难度建模来增强模型稳定性，并通过局部放大可视化进一步展示典型失败病例的分割差异。
+整体来看，虽然个别折存在退化，本文方法在五折平均Dice上略高于U-Mamba基线，平均HD95呈整体下降趋势。这表明所提出的三视图空间建模和跳跃连接特征标定策略总体上对肿瘤边界恢复具有积极作用，但其收益仍受病例分布和小体积病灶影响。同时，f3折逐病例统计也提示当前方法对极小体积增强肿瘤、低对比度病灶和复杂病例分布的适应性仍有进一步提升空间。后续可结合病灶尺度感知、视图权重自适应或病例难度建模来增强模型稳定性，并通过局部放大可视化进一步展示典型失败病例的分割差异。
 
 **3.6**　消融实验
 
@@ -339,13 +336,13 @@ Table 6 Five-fold main ablation results
 | +ETSM+Stage      | √            | √                   | ×                | 85.23±2.20  | 4.603±1.198 |
 | +ETSM+Stage+Skip | √            | √                   | √                | **85.53±2.46** | **4.077±1.055** |
 
-由表6可以看出，各模块的增益并非简单单调叠加。仅在编码器中引入ETSM后，五折平均Dice为85.21%，与U-Mamba的85.27%基本持平，而平均HD95由4.606 mm降至4.263 mm。该汇总结果提示，单独引入三视图状态空间建模时，数值收益更多体现在边界距离指标而非区域重叠指标上。
+由表6可以看出，各模块的增益并非简单单调叠加。仅在编码器中引入ETSM后，五折平均Dice为85.21%，与U-Mamba的85.27%基本持平，但平均HD95由4.606下降至4.263，说明三视图状态空间建模对边界距离误差具有一定改善作用，其收益更多体现在结构定位而非区域重叠指标上。
 
-进一步加入阶段感知解码策略后，平均Dice为85.23%，平均HD95为4.603 mm，未表现出稳定优于U-Mamba的趋势。这表明仅在低分辨率解码阶段补充ETSM并不足以稳定改善整体分割结果，解码端全局结构建模仍需要与跳跃连接中的浅层细节信息进行有效协调。
+进一步加入阶段感知解码策略后，平均Dice为85.23%，平均HD95为4.603，未表现出稳定优于U-Mamba的趋势。这表明仅在低分辨率解码阶段补充ETSM并不足以稳定改善整体分割结果，解码端全局结构建模仍需要与跳跃连接中的浅层细节信息进行有效协调。
 
-在此基础上进一步加入语义引导跳跃连接特征标定后，模型在本组五折消融实验中取得相对较优结果，平均Dice为85.53%，平均HD95为4.077 mm。该现象与利用解码端语义协调浅层细节特征的设计目标一致，但由于各模块以累加方式评估且未对模块交互进行统计检验，本文仅将其解释为完整配置下的联合效果，不作单一模块的独立显著增益结论。
+在此基础上进一步加入语义引导跳跃连接特征标定后，模型在本组五折消融实验中取得相对较优结果，平均Dice增至85.53%，平均HD95降至4.077。该结果说明，跳跃连接中的浅层特征虽然包含丰富空间细节，但也可能混入背景噪声和语义不一致响应。利用解码端高级语义对跳跃连接特征进行自适应标定后，模型能够更有效地融合全局结构信息与局部细节信息，从而在保持区域重叠精度的同时改善边界定位质量。
 
-为初步比较跳跃连接标定方式，本文将语义引导残差式跳跃标定替换为Attention U-Net风格的0-1单向注意力门控，并在第0折上进行机制筛查。传统注意力门控的平均Dice为88.46%，平均HD95为4.608 mm；本文方法在第0折上分别为88.86%和3.444 mm。该单折结果表明，本文标定方式在该数据划分下取得了更高的Dice和更低的HD95，但尚不足以证明其在所有数据划分上均具有稳定优势。结合残差式双向调节的结构特点，该结果可作为其避免对浅层细节进行纯抑制的初步证据，仍需更多折次验证。
+为进一步验证跳跃连接标定方式的合理性，本文将语义引导残差式跳跃标定替换为Attention U-Net风格的0-1单向注意力门控，并在第0折上进行机制对照。结果显示，传统注意力门控的平均Dice为88.46%，平均HD95为4.608，低于本文方法在第0折上的88.86%和3.444。该结果提示，直接采用0-1门控可能对浅层有效细节特征产生过度抑制，而本文残差式双向标定能够在保留细节信息的同时利用解码端语义进行自适应调节，更有利于边界恢复。
 
 **3.7**　模型复杂度对比
 
@@ -367,7 +364,7 @@ Table 7 Comparison of model complexity
 
 为直观分析本文方法的分割效果，选取典型病例进行可视化比较。图4展示了不同方法在脑肿瘤MRI图像上的分割结果。可以观察到，基础U-Mamba在肿瘤边界模糊区域容易出现漏分或边界不连续现象；本文方法在该示例中对肿瘤核心和水肿区域的分割更为连续，并在增强肿瘤等小区域上保持了较好的结构一致性。
 
-在所选可视化病例中，本文方法在部分肿瘤边界复杂、形态不规则的区域表现出较好的连续性。这可能与ETSM的多方向上下文建模，以及阶段感知解码和跳跃连接特征标定对结构恢复的补充作用有关；该观察仅限于定性示例，不替代五折定量结果。
+特别是在肿瘤边界复杂、形态不规则以及跨切片变化明显的病例中，本文方法的分割结果表现出较好的连续性。这可能与ETSM模块对三维多方向上下文信息的建模能力，以及阶段感知解码策略和语义引导跳跃连接特征标定模块对结构恢复和边界表达的补充作用有关。
 
 ![brats_visualization_all_modalities5](paper_assets/brats_visualization_all_modalities5.png)
 
@@ -375,7 +372,7 @@ Table 7 Comparison of model complexity
 
 Figure 4 Comparison of visualization results
 
-图4仅用于展示所选病例中的定性差异。在该示例中，本文方法的部分区域边界和结构连续性优于U-Mamba；该观察不代表所有病例上的稳定优势，整体性能判断仍以五折定量结果和病例级统计检验为准。
+综合定量结果和可视化结果可知，本文方法在计算复杂度可控的前提下，对三维脑肿瘤MRI分割结果具有一定改善作用，尤其在边界细节和结构连续性方面表现出一定优势。
 
 针对表5中f3折小体积ET病例退化现象，进一步选取BraTS20_Training_087、BraTS20_Training_299和BraTS20_Training_315三个失败案例进行可视化分析。图5给出了完整脑切片上的分割对比，图6给出了肿瘤区域局部放大结果。可以看到，这些病例的真实ET体积较小，其中BraTS20_Training_087的真实ET体积仅为406个体素，本文方法对ET区域响应不足，导致该病例的平均Dice和HD95均出现较大退化。BraTS20_Training_299和BraTS20_Training_315也表现出不同程度的小目标漏分或局部响应减弱现象。
 
@@ -391,13 +388,13 @@ Figure 5 Full-slice visualization of failure cases in fold f3
 
 Figure 6 Local zoom-in visualization of failure cases in fold f3
 
-上述失败案例说明，本文方法虽然在五折汇总的有限病例HD95上取得较低数值，但在极小体积增强肿瘤和弱响应区域上仍存在不稳定性。该现象与f3折逐病例统计结果一致，提示后续工作需要进一步引入病灶尺度感知、边界约束或自适应视图权重机制，以提升模型对小体积ET区域的鲁棒性。
+上述失败案例说明，本文方法虽然在五折平均HD95上取得改善，但在极小体积增强肿瘤和弱响应区域上仍存在不稳定性。该现象与f3折逐病例统计结果一致，提示后续工作需要进一步引入病灶尺度感知、边界约束或自适应视图权重机制，以提升模型对小体积ET区域的鲁棒性。
 
 **4**　总结
 
 本文针对三维脑肿瘤MRI分割中空间上下文建模开销较大、跨切面信息利用不足以及解码阶段细节恢复不充分等问题，提出了一种融合高效三视图状态空间建模与阶段感知解码的脑肿瘤MRI分割方法。该方法以U-Mamba为基础网络，在编码阶段将三维特征映射到轴状位、冠状位和矢状位三个二维视图，并通过参数共享的视觉状态空间模块进行高效建模，以增强多方向空间上下文表达能力。在解码阶段，根据不同分辨率层级的特征恢复需求设计阶段感知解码策略，在低分辨率层利用ETSM模块补偿全局结构信息，在高分辨率层保留卷积细化能力。同时，通过语义引导的跳跃连接特征标定模块，对编码端浅层细节特征进行自适应筛选，缓解浅层特征与深层语义之间的不一致问题。
 
-在BraTS2020脑肿瘤分割数据集上，本文方法相较U-Mamba的五折汇总平均Dice由85.27%增至85.53%，平均HD95由4.606 mm降至4.077 mm。病例级配对检验表明，Dice呈小幅正向偏移，但配对t检验中的均值差异未达显著水平；HD95呈整体下降趋势，同样未达0.05显著性水平。模型复杂度实验中，相较U-Mamba，本文方法的参数量由42.75M降至37.10M，峰值显存占用由4.22 GiB降至2.46 GiB；但nnU-Net在复杂度指标上仍占优势。因此，本文方法的效率改善主要体现为对U-Mamba状态空间基线的优化。五折消融实验中，单独引入ETSM和阶段感知解码时性能增益并不单调；完整配置取得本组实验中较高的平均Dice和较低的平均HD95，该现象与语义引导跳跃特征标定的设计目标一致，但不作单一模块的独立显著增益结论。
+在BraTS2020脑肿瘤分割数据集上的实验结果表明，本文方法相较于U-Mamba基线模型在平均Dice和HD95指标上均有所改善。五折平均Dice由85.27%增至85.53%，平均HD95由4.606 mm降至4.077 mm，说明该方法在保持区域分割精度的同时，对肿瘤边界定位质量具有一定改善作用。模型复杂度实验表明，相较U-Mamba，本文方法的参数量由42.75M降至37.10M，峰值显存占用由4.22 GiB降至2.46 GiB；但nnU-Net在复杂度指标上仍占优势。因此，本文方法的效率改善主要体现为对U-Mamba状态空间基线的优化。五折消融实验结果表明，单独引入ETSM和阶段感知解码时性能增益并不单调，而在二者基础上加入语义引导跳跃连接特征标定后，模型取得本组实验中较高的平均Dice和较低的平均HD95，说明解码端语义约束对跳跃特征筛选和结构恢复具有积极作用。
 
 尽管本文方法取得了一定效果，但仍存在不足。首先，本文方法在部分数据划分上的性能仍存在波动，说明模型对不同病例分布的适应性仍有提升空间。其次，ETSM采用平均池化方式生成三视图特征，虽然能够降低序列建模开销，但也可能削弱极小病灶或低对比度区域的细粒度响应。再次，当前阶段感知策略采用固定的低分辨率阶段集合，尚不能根据肿瘤尺度、边界模糊程度或病例难度自适应调整建模范围。此外，本文方法未显式引入边界损失或不确定性约束，对复杂模糊边界的进一步建模仍有提升空间。未来工作将从多中心和多年份数据集验证、自适应视图权重学习、病灶尺度感知解码、边界细节约束以及模型量化或蒸馏等方面进一步完善模型，并探索其与临床辅助标注流程结合的可能性。
 
@@ -452,9 +449,3 @@ Figure 6 Local zoom-in visualization of failure cases in fold f3
 [24] LIU J, YU R, WANG Y, et al. Swin-UMamba: Mamba-based UNet with ImageNet-based pretraining[EB/OL]. arXiv:2402.03302, 2024. https://arxiv.org/abs/2402.03302.
 
 [25] LIAO W, ZHU Y, WANG X, et al. LightM-UNet: Mamba Assists in Lightweight UNet for Medical Image Segmentation[J]. Neural Networks, 2024, 178: 106539. DOI: 10.1016/j.neunet.2024.106539.
-
-[26] 李孟灵, 蔡冬怡, 王金强, 等. 基于三平面状态空间建模的三维医学图像分割模型[J/OL]. 计算机科学: 1-14[2026-07-11]. https://link.cnki.net/urlid/50.1075.tp.20260109.1648.023.
-
-[27] 侯蓓蓓, 关赛宗, 王亚敏. 基于Transformer的轻量级脑肿瘤图像分割算法[J/OL]. 北京邮电大学学报[2026-07-11]. DOI: 10.13190/j.jbupt.2024-169.
-
-[28] 侯向宁, 黄孝斌, 徐草草, 等. 基于Mamba的轻量级多模态脑肿瘤MRI图像分割[J/OL]. 现代电子技术[2026-07-11]. DOI: 10.16652/j.issn.1004-373x.2026.09.006.
