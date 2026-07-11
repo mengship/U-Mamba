@@ -127,9 +127,7 @@ done
 
 审稿意见：ETSM内部`cross-view gating`缺少独立量化验证。
 
-当前决策（2026-07-10）：作为支线任务暂缓，不写入当前论文，也不据第0折结果调整主线结论。待找回此前可能已完成的实验记录后，再决定是否扩展f1-f4。正文仅描述跨视图交互的结构和计算流程，不宣称其具有独立性能增益。
-
-优先级：暂缓。
+优先级：中高。
 
 新增训练器：
 
@@ -150,9 +148,9 @@ f0筛查结果：
 - f0 HD95结果：WT=3.925076，TC=2.787099，ET=1.662399，Mean=2.791524；ET统计中finite=71、nan=1、inf=2，与最终方法计数口径一致。
 - 与最终方法f0的Mean HD95=3.444相比，NoCrossViewGate的HD95更低，说明在f0上关闭跨视图交互门控反而取得更好的边界距离表现。
 - 当前判断：`cross-view gating`在当前实现中不能作为稳定增益模块来强调。至少在f0上，它可能引入额外扰动或过度调节，导致边界误差变大。论文中应谨慎处理该模块：若保留当前最终方法，需要弱化“跨视图门控贡献”的表述；若将NoCrossViewGate作为新候选方法，则需要进一步补五折验证。
-- 若恢复该支线：需要计算该trainer的WT/TC/ET Dice、峰值显存和推理时间；若准备将其替换为最终方法，还需补f1-f4和显著性统计。
+- 待补：需要计算该trainer的WT/TC/ET Dice、峰值显存和推理时间；若准备将其替换为最终方法，还需补f1-f4和显著性统计。
 
-仅在找回旧实验且导师要求补足统计时，再考虑跑f1-f4：
+若f0差异明显或导师要求补足统计，再跑f1-f4：
 
 ```bash
 for FOLD in 1 2 3 4; do
@@ -160,7 +158,7 @@ for FOLD in 1 2 3 4; do
 done
 ```
 
-论文中暂不使用。当前f0结果显示关闭cross-view gating后Dice和HD95均更优，因此不能将cross-view gating表述为已验证的明确贡献点。若后续恢复该支线并扩展五折，再根据完整结果决定是否写入负向消融或调整最终方法。
+论文中使用：作为ETSM内部消融，比较`w/o cross-view gating`和本文方法。当前f0结果显示关闭cross-view gating后Dice和HD95均更优，因此不应再将cross-view gating表述为明确贡献点。若后续不扩展五折，可在论文中将其作为“交互门控在当前实现下未带来稳定收益”的负向消融结果；若要调整最终方法，则需补NoCrossViewGate五折。
 
 ## 五、C4：传统Attention U-Net门控对照
 
@@ -200,14 +198,14 @@ f0筛查结果：
 
 建议分两级处理：
 
-1. 必做：补跑`nnUNetTrainer_150epochs`五折，作为训练轮数对齐的CNN强基线。
+1. 必做：补跑`nnUNetTrainer`五折，作为最公平的CNN强基线。
 2. 尽量做：补跑SegMamba。SegMamba采用官方公开实现，因其不是nnU-Net trainer，复现时对齐BraTS2020五折划分、训练轮数和Dice/HD95统计口径，而不强行声称完全相同训练框架。
 
 nnU-Net命令：
 
 ```bash
 for FOLD in 0 1 2 3 4; do
-  nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainer_150epochs
+  nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainer
 done
 ```
 
@@ -218,13 +216,13 @@ python umamba/0607/collect_rthd_results.py \
   --results-root /hy-tmp/U-Mamba/data/nnUNet_results/Dataset705_BraTS2020 \
   --folds 0 1 2 3 4 \
   --trainers \
-    nnUNetTrainer_150epochs \
+    nnUNetTrainer \
     nnUNetTrainerUMambaEnc_150epochs \
     nnUNetTrainerUMambaEncRTHD_StageAwareDecoder_SkipCalibration_150epochs \
   --csv /hy-tmp/c5_fair_baselines_dice.csv
 ```
 
-论文中使用：主表仅保留可追溯的复现结果；无法从现有材料完整追溯训练划分和评价流程的文献数值不再纳入主表排名。正文明确nnU-Net、U-Mamba和本文方法采用nnU-Net框架复现，SegMamba采用官方独立实现并对齐五折划分、训练轮数和评价口径。
+论文中使用：横向对比表分成“统一环境复现结果”和“文献参考结果”两组，不把不同来源结果混在一起直接排名。
 
 当前进展：
 
@@ -560,13 +558,13 @@ python umamba/0607/analyze_c_revisions.py \
   - 已完成f0筛查：RTX3090 24GB上触发CUDA OOM，当前不扩展五折；该结果可作为阶段感知解码设计的资源开销依据。
   - 补充结果：`PartialDecoderETSM_150epochs` f0可训练，Mean Validation Dice=0.8872545937003561，Mean HD95=4.248719；待补区域Dice/复杂度后决定是否写入论文消融表。
 
-- [ ] C3：`w/o cross-view gating`对照（支线暂缓，当前论文不写入）。
+- [ ] C3：`w/o cross-view gating`对照。
   - 先跑f0：
     ```bash
     nnUNetv2_train 705 3d_fullres 0 -tr nnUNetTrainerUMambaEncRTHD_NoCrossViewGate_150epochs
     ```
   - 若差异明显，再考虑扩展五折。
-  - 已完成f0训练：Mean Validation Dice=0.8889759482835508，Mean HD95=2.791524，均优于当前最终方法f0。2026-07-10决定先查找此前实验记录，不在当前论文中展开该支线。
+  - 已完成f0训练：Mean Validation Dice=0.8889759482835508，Mean HD95=2.791524，均优于当前最终方法f0。需要决定是否扩展f1-f4，或仅作为负向消融说明cross-view gating贡献有限。
 
 - [x] C4：Attention U-Net 0-1门控对照。
   - 先让Claude检查/重写该训练器逻辑。
@@ -582,7 +580,7 @@ python umamba/0607/analyze_c_revisions.py \
 - [x] 完成nnU-Net五折训练并收集Dice/HD95结果。
   ```bash
   for FOLD in 0 1 2 3 4; do
-    nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainer_150epochs
+    nnUNetv2_train 705 3d_fullres ${FOLD} -tr nnUNetTrainer
   done
   ```
 
