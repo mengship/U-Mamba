@@ -240,7 +240,6 @@ python umamba/0607/collect_rthd_results.py \
 - SegMamba fold4 Dice：WT=90.20%，TC=82.84%，ET=73.80%，Mean=82.28%；HD95：WT=4.443，TC=5.211，ET=3.721，Mean=4.458。fold4验证集为73例，符合369例五折划分。
 - SegMamba五折结果：Dice WT=91.23±0.71%、TC=85.25±2.11%、ET=76.37±4.62%、Mean=84.28±2.29%；HD95 WT=4.677±0.872、TC=5.337±0.449、ET=4.318±1.427、Mean=4.777±0.796。
 - 与本文方法五折均值对比：本文方法Mean Dice=85.53±2.46%，Mean HD95=4.077±1.055；SegMamba Mean Dice=84.28±2.29%，Mean HD95=4.777±0.796。正式论文中可表述为本文方法相较SegMamba取得更高Dice和更低HD95，但仍需说明SegMamba采用官方独立实现，公平性主要体现在相同BraTS2020五折划分、训练轮数和评价口径。
-- SegMamba资源开销已按表7协议补测：RTX 3090、输入`1×4×128×128×128`、FP32、5次预热和20次前向平均；参数量为67.416196M，前向时间为0.654888 s，峰值显存为3.260742 GiB。测试脚本为SegMamba项目根目录下的`measure_segmamba_complexity.py`，结果归档于`../0711/SegMamba_complexity_20260712.{csv,txt}`。
 - HD95空掩膜审计已完成：四个主模型均覆盖369例，且共同GT显示ET为空的病例共27例。按“有限HD95/双侧为空/仅真实标注为空/仅预测为空”顺序，ET区域nnU-Net、SegMamba、U-Mamba和本文方法分别为339/8/19/3、341/8/19/1、341/4/23/1和340/4/23/2。统计证据位于`umamba/0711/*_empty_masks.{csv,json}`。
 
 ## 七、C6：f3折退化病例统计

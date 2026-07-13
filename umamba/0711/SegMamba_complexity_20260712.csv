@@ -1,0 +1,2 @@
+model,device,precision,input_shape,warmup,repeats,params_m,trainable_params_m,forward_time_s,peak_memory_gib
+SegMamba,cuda:0,FP32,1x4x128x128x128,5,20,67.416196,67.416196,0.654888,3.260742
