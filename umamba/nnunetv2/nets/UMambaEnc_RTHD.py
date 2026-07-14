@@ -882,7 +882,8 @@ def get_umamba_enc_rthd_3d_from_plans(
         skip_gate_type: str = "semantic",
         use_boundary_attention_head: bool = False,
         use_frequency_refinement: bool = False,
-        frequency_refinement_stages: List[int] = None
+        frequency_refinement_stages: List[int] = None,
+        rthd_stages_encoder: List[int] = None,
     ):
     """
     从plans创建UMambaEnc_RTHD网络
@@ -905,6 +906,7 @@ def get_umamba_enc_rthd_3d_from_plans(
             - interaction_type: 'gate'
         rthd_config_encoder: 编码器专用RTHD配置（优先级高于rthd_config）
         rthd_config_decoder: 解码器专用RTHD配置（优先级高于rthd_config）
+        rthd_stages_encoder: 编码器使用RTHD的stage列表；None保持原有[0,1,2,3,4]，[]表示全部使用原始MambaLayer
         use_rthd_decoder: 是否在解码器使用RTHD（向后兼容，False等价于decoder_rthd_mode="none"）
         decoder_rthd_mode: 解码器RTHD模式 - "none", "partial", "full" (默认"full")
         rthd_stages_decoder: 解码器使用RTHD的stage列表（仅在decoder_rthd_mode="partial"时生效）
@@ -939,6 +941,9 @@ def get_umamba_enc_rthd_3d_from_plans(
     if rthd_config is not None:
         default_rthd_config.update(rthd_config)
 
+    if rthd_stages_encoder is None:
+        rthd_stages_encoder = [0, 1, 2, 3, 4]
+
     kwargs = {
         'UMambaEnc_RTHD': {
             'input_size': configuration_manager.patch_size,
@@ -950,7 +955,7 @@ def get_umamba_enc_rthd_3d_from_plans(
             'nonlin': nn.LeakyReLU,
             'nonlin_kwargs': {'inplace': True},
             'use_rthd': True,  # 启用RTHD
-            'rthd_stages': [0, 1, 2, 3, 4],  # 所有stage使用RTHD（完整消融实验配置，共5个stage）
+            'rthd_stages': rthd_stages_encoder,
             'rthd_config': default_rthd_config,  # 统一配置（向后兼容）
             'rthd_config_encoder': rthd_config_encoder,  # 编码器专用配置
             'rthd_config_decoder': rthd_config_decoder,  # 解码器专用配置
