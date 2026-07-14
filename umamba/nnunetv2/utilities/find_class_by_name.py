@@ -5,6 +5,14 @@ from batchgenerators.utilities.file_and_folder_operations import *
 
 
 def recursive_find_python_class(folder: str, class_name: str, current_module: str):
+    # Most nnU-Net trainers use the class name as the module name. Importing
+    # that exact module first avoids loading unrelated optional architectures.
+    matching_module = join(folder, class_name + '.py')
+    if isfile(matching_module):
+        m = importlib.import_module(current_module + "." + class_name)
+        if hasattr(m, class_name):
+            return getattr(m, class_name)
+
     tr = None
     for importer, modname, ispkg in pkgutil.iter_modules([folder]):
         # print(modname, ispkg)
