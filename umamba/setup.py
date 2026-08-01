@@ -32,7 +32,7 @@ setup(name='nnunetv2',
           "seaborn",
           "imagecodecs",
           "yacs",
-          "monai==1.3.0",
+          "monai==1.6.0",
           "opencv-python"
       ],
       entry_points={
